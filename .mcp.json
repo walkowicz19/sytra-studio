@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "sytra-studio": {
+      "command": "target-build/release/sytra-mcp.exe",
+      "args": [],
+      "env": {}
+    }
+  }
+}

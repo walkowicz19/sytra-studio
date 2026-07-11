@@ -1,0 +1,32 @@
+[package]
+name    = "sytra-studio"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# Tauri on macOS builds a dylib for the test harness
+name = "sytra_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "sytra-studio"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri            = { version = "2", features = ["rustls-tls"] }
+tauri-plugin-shell   = "2"
+tauri-plugin-dialog  = "2"
+tauri-plugin-fs      = "2"
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+serde_yaml       = { workspace = true }
+uuid             = { workspace = true }
+anyhow           = { workspace = true }
+rust-embed       = { version = "8", features = ["mime-guess"] }
+mime_guess       = "2"
+tokio            = { version = "1", features = ["full"] }
+sytra-host       = { path = "../crates/sytra-host" }
+sytra-contracts  = { path = "../crates/sytra-contracts" }

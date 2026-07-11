@@ -1,0 +1,19 @@
+[package]
+name = "sytra-host"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+sytra-contracts = { path = "../sytra-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait = "0.1"
+sha2 = "0.10"
+uuid.workspace = true
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+polars.workspace = true
+reqwest.workspace = true
+
+

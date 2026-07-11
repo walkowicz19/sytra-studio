@@ -1,0 +1,53 @@
+version: 1
+run_id: null
+train_mode: sft
+model: mlx-community/Meta-Llama-3-8B-Instruct-4bit
+
+backend:
+  kind: cpu
+  judge_model: null
+
+data:
+  source: local
+  jsonl_path: fixtures/data.golden.jsonl
+  fingerprint: sha256:0000000000000000000000000000000000000000000000000000000000000
+  local:
+    path: fixtures/data.golden.jsonl
+    format: jsonl
+    mapping:
+      prompt: prompt
+      completion: completion
+
+adapter:
+  type: lora
+  rank: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj]
+  quant_bits: null
+
+optim:
+  learning_rate: 2.0e-4
+  schedule: cosine
+  warmup_steps: 20
+  weight_decay: 0.0
+  grad_accumulation_steps: 8
+
+train:
+  max_steps: 4
+  epochs: null
+  batch_size: 2
+  max_seq_len: 2048
+  save_every: 2
+  packing: false
+
+algo:
+  beta: null
+  label_smoothing: 0.0
+  group_size: null
+  kl_coef: null
+  completion_only_loss: true
+
+output:
+  adapter_path: fixtures/out/adapter
+  resume_from: null

@@ -1,0 +1,158 @@
+[
+ {
+  "model_id": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
+  "name": "Llama 3 8B Instruct (4-bit)",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "float16",
+  "moe_active_params": null,
+  "license": "llama3",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "meta-llama/Meta-Llama-3-8B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "general",
+   "instruction-following"
+  ],
+  "benchmark_hint": "high"
+ },
+ {
+  "model_id": "mistralai/Mistral-7B-v0.1",
+  "name": "Mistral 7B v0.1",
+  "param_count": 7242000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
+  "use_case_tags": [
+   "general",
+   "completion"
+  ],
+  "benchmark_hint": "medium"
+ },
+ {
+  "model_id": "org/knowledge-ft",
+  "name": "Knowledge Fine-tuned Mistral",
+  "param_count": 7242000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
+  "use_case_tags": [
+   "knowledge"
+  ],
+  "benchmark_hint": "medium"
+ },
+ {
+  "model_id": "org/toolcalling-ft",
+  "name": "Toolcalling Fine-tuned Mistral",
+  "param_count": 7242000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
+  "use_case_tags": [
+   "tool-use"
+  ],
+  "benchmark_hint": "medium"
+ },
+ {
+  "model_id": "org/behavior-ft",
+  "name": "Behavior Fine-tuned Mistral",
+  "param_count": 7242000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium"
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "name": "Qwen2.5 Coder 7B Instruct",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "use_case_tags": [
+   "code",
+   "frontend",
+   "instruction-following"
+  ],
+  "benchmark_hint": "high"
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-7B-Instruct",
+  "name": "Qwen2.5 7B Instruct",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-7B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "general",
+   "instruction-following"
+  ],
+  "benchmark_hint": "high"
+ }
+]

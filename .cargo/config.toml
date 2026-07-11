@@ -1,0 +1,16 @@
+# Sytra Studio — Cargo workspace config
+#
+# Using a dedicated build directory for CLI/CI builds so that rust-analyzer
+# (which uses the default `target/` dir via VS Code) never locks artifacts
+# shared with manual `cargo build` invocations.
+#
+# Usage:
+#   cargo build  →  writes to `target-build/`  (no RA conflicts)
+#   VS Code RA   →  writes to `target/`         (default, unaffected)
+
+[build]
+target-dir = "target-build"
+
+# Reduce link-time contention on Windows by limiting parallel link jobs
+[target.x86_64-pc-windows-msvc]
+linker = "link.exe"
