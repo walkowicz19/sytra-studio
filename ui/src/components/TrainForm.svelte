@@ -123,8 +123,8 @@
         submitting = false
         return
       }
-      if (trainFormStore.datasets.length > 5) {
-        pushToast('error', 'Maximum limit of datasets is 5')
+      if (trainFormStore.datasets.length > 150) {
+        pushToast('error', 'Maximum limit of datasets is 150')
         submitting = false
         return
       }

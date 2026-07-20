@@ -62,7 +62,22 @@ impl LocalDataSource {
                         .map_err(|e| DataSourceError::InvalidSpec(format!("bad jsonl row: {e}")))?;
                     let prompt = raw.get(prompt_col).cloned().unwrap_or(Value::Null);
                     let completion = raw.get(completion_col).cloned().unwrap_or(Value::Null);
-                    rows.push(serde_json::json!({ "prompt": prompt, "completion": completion }));
+                    let mut canonical =
+                        serde_json::json!({ "prompt": prompt, "completion": completion });
+
+                    // Preserve conversational rows for chat-template-aware SFT.
+                    // The canonical prompt/completion pair remains available to
+                    // backends that do not understand messages.
+                    if let Some(messages) = raw.get("messages") {
+                        if !messages.is_array() {
+                            return Err(DataSourceError::InvalidSpec(
+                                "messages must be an array when present".into(),
+                            ));
+                        }
+                        canonical["messages"] = messages.clone();
+                    }
+
+                    rows.push(canonical);
                 }
                 Ok(rows)
             }

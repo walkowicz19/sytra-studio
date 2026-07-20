@@ -39,9 +39,10 @@ fn assert_well_formed_and_no_log_fallback(lines: &[TelemetryLine]) {
     let mut terminal_count = 0;
     for line in lines {
         match line {
-            TelemetryLine::Log { line: raw, .. } => {
+            TelemetryLine::Log { ts: None, line: raw, .. } => {
                 panic!("a real telemetry line fell back to Log (parser regression?): {raw}")
             }
+            TelemetryLine::Log { ts: Some(_), .. } => {}
             TelemetryLine::Event { event, .. } => {
                 let event_name: EventName =
                     serde_json::from_value(serde_json::Value::String(event.clone()))

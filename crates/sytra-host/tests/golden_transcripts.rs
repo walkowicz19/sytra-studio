@@ -95,3 +95,51 @@ async fn local_datasource_materializes_golden_run_yaml_dataset() {
 
     std::fs::remove_dir_all(&out_dir).ok();
 }
+
+#[tokio::test]
+async fn local_datasource_preserves_conversational_messages() {
+    use std::collections::BTreeMap;
+
+    use sytra_contracts::run_config::TrainMode;
+    use sytra_host::datasource::local::LocalDataSource;
+    use sytra_host::{DataSource, DatasetSpec, SourceKind};
+
+    let temp_root = std::env::temp_dir().join(format!(
+        "sytra-conversational-materialize-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&temp_root).unwrap();
+    let source_path = temp_root.join("source.jsonl");
+    std::fs::write(
+        &source_path,
+        r#"{"instruction":"Question","output":"Answer","messages":[{"role":"system","content":"Be accurate"},{"role":"user","content":"Question"},{"role":"assistant","content":"Answer"}]}"#,
+    )
+    .unwrap();
+
+    let spec = DatasetSpec {
+        source: SourceKind::Local,
+        train_mode: TrainMode::Sft,
+        params: serde_json::json!({
+            "path": source_path,
+            "format": "jsonl",
+            "mapping": BTreeMap::from([
+                ("prompt".to_string(), "instruction".to_string()),
+                ("completion".to_string(), "output".to_string()),
+            ]),
+        }),
+    };
+
+    let materialized = LocalDataSource
+        .materialize(&spec, &temp_root.join("out"))
+        .await
+        .unwrap();
+    let row: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(materialized.jsonl_path).unwrap()).unwrap();
+
+    assert_eq!(row["prompt"], "Question");
+    assert_eq!(row["completion"], "Answer");
+    assert_eq!(row["messages"][0]["role"], "system");
+    assert_eq!(row["messages"][0]["content"], "Be accurate");
+
+    std::fs::remove_dir_all(&temp_root).ok();
+}

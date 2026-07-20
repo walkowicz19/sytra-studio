@@ -18,7 +18,7 @@ export function initTheme() {
 }
 
 // ─── Active tab ───────────────────────────────────────────────────────────────
-export type Tab = 'train' | 'merge' | 'runs' | 'guider' | 'help'
+export type Tab = 'train' | 'merge' | 'runs' | 'guider' | 'help' | 'settings'
 export const tabStore = $state({ active: 'train' as Tab })
 export function setTab(t: Tab) { tabStore.active = t }
 

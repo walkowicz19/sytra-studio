@@ -10,6 +10,7 @@
   import Runs from './components/Runs.svelte'
   import Guider from './components/Guider.svelte'
   import Help from './components/Help.svelte'
+  import Settings from './components/Settings.svelte'
   import Toast from './components/Toast.svelte'
   import { onMount } from 'svelte'
 
@@ -32,6 +33,8 @@
           <Runs />
         {:else if tabStore.active === 'guider'}
           <Guider />
+        {:else if tabStore.active === 'settings'}
+          <Settings />
         {:else if tabStore.active === 'help'}
           <Help />
         {/if}

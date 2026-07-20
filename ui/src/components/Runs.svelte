@@ -6,6 +6,7 @@
 
   let loading  = $state(true)
   let deleting = $state<string | null>(null)
+  let effectiveRamMb = $state(0)
   
   // Publish state
   let activePublishRun = $state<any | null>(null)
@@ -32,15 +33,29 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 import torch
+import gc
 
 BASE = "<base model id, e.g. Qwen/Qwen2.5-Coder-7B-Instruct>"
-model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True)
+print("Loading base model...")
+model = AutoModelForCausalLM.from_pretrained(BASE, torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, device_map="cpu")
+gc.collect()
+
+print("Loading adapter and merging...")
 model = PeftModel.from_pretrained(model, r"${r.artifact_path}").merge_and_unload()
+gc.collect()
+
+print("Saving merged model...")
 model.save_pretrained(r"${exportMergedDir(r)}", safe_serialization=True, max_shard_size="2GB")
-AutoTokenizer.from_pretrained(r"${r.artifact_path}").save_pretrained(r"${exportMergedDir(r)}")`
+AutoTokenizer.from_pretrained(r"${r.artifact_path}").save_pretrained(r"${exportMergedDir(r)}")
+print("Merge complete!")`
   }
+  // Use disk-backed temp files when effective RAM <= 20 GB to prevent OOM crashes
+  // during GGUF quantization. The threshold is detected from AppSettings automatically.
+  const LOW_RAM_THRESHOLD_MB = 20_480
   function exportConvertCmd(r: any): string {
-    return `.sytra-envs\\merge-env\\Scripts\\python -u .tools\\llama.cpp\\convert_hf_to_gguf.py "${exportMergedDir(r)}" --outtype q8_0 --outfile model.q8_0.gguf`
+    const useTempFile = effectiveRamMb > 0 && effectiveRamMb <= LOW_RAM_THRESHOLD_MB
+    const tempFlag = useTempFile ? ' --use-temp-file' : ''
+    return `.sytra-envs\\merge-env\\Scripts\\python -u .tools\\llama.cpp\\convert_hf_to_gguf.py "${exportMergedDir(r)}" --outtype q8_0 --outfile model.q8_0.gguf${tempFlag}`
   }
   const exportModelfile = `FROM ./model.q8_0.gguf
 
@@ -57,7 +72,13 @@ PARAMETER num_ctx 8192`
   const exportOllamaCmd = `ollama create my-sytra-model -f Modelfile
 ollama run my-sytra-model`
 
-  onMount(refresh)
+  onMount(async () => {
+    try {
+      const settings = await api.getSettings()
+      effectiveRamMb = settings.effective_main_memory_mb
+    } catch {}
+    await refresh()
+  })
 
   async function refresh() {
     loading = true

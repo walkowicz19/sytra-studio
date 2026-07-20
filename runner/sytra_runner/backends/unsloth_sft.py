@@ -15,6 +15,38 @@ from .. import telemetry
 from ..config import RunConfig
 
 
+def _to_prompt_completion(row: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """Convert one SFT row to conversational prompt-completion format.
+
+    TRL can then mask the prompt and compute loss only on the assistant
+    completion. Flattening the conversation to a single ``text`` field would
+    train the model to reproduce system and user turns as well.
+    """
+    raw_messages = row.get("messages")
+    if raw_messages:
+        messages = [
+            {"role": str(message["role"]), "content": str(message["content"])}
+            for message in raw_messages
+        ]
+    elif isinstance(row.get("prompt"), list) and isinstance(row.get("completion"), list):
+        messages = [
+            {"role": str(message["role"]), "content": str(message["content"])}
+            for message in row["prompt"] + row["completion"]
+        ]
+    else:
+        messages = [
+            {"role": "user", "content": str(row.get("prompt", ""))},
+            {"role": "assistant", "content": str(row.get("completion", ""))},
+        ]
+
+    if len(messages) < 2 or messages[-1]["role"] != "assistant":
+        raise ValueError("SFT rows must end with a non-empty assistant message")
+    if not messages[-1]["content"].strip():
+        raise ValueError("SFT assistant completion must not be empty")
+
+    return {"prompt": messages[:-1], "completion": [messages[-1]]}
+
+
 def run_real_training(config: RunConfig) -> int:
     """Execute real Unsloth training on CUDA."""
     # Heavy imports deferred to execution time. unsloth MUST come first —
@@ -129,32 +161,16 @@ def run_real_training(config: RunConfig) -> int:
     )
     telemetry.emit_event("stage", {"stage": "preparing_dataset"})
 
-    # 3. Load canonical dataset and render each prompt/completion pair
-    # through the model's chat template. Training on the raw completion
-    # column alone would teach answers without their questions.
+    # 3. Load canonical data. For SFT, keep prompt and completion separate so
+    # TRL can apply the model's chat template and mask prompt tokens in loss.
     jsonl_path = config.data.jsonl_path
     if not jsonl_path or not os.path.exists(jsonl_path):
         raise ValueError(f"Dataset path does not exist: {jsonl_path}")
 
     dataset = load_dataset("json", data_files=jsonl_path, split="train")
 
-    def to_text(row: dict[str, Any]) -> dict[str, str]:
-        if row.get("messages"):
-            messages = row["messages"]
-        else:
-            messages = [
-                {"role": "user", "content": str(row.get("prompt", ""))},
-                {"role": "assistant", "content": str(row.get("completion", ""))},
-            ]
-        try:
-            text = tokenizer.apply_chat_template(messages, tokenize=False)
-        except Exception:
-            text = "".join(
-                f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in messages
-            )
-        return {"text": text}
-
-    dataset = dataset.map(to_text)
+    if train_mode == "sft":
+        dataset = dataset.map(_to_prompt_completion)
 
     # 4/5. Trainer — built version-robustly: TRL has renamed several
     # SFTConfig fields and the tokenizer kwarg across releases, so pass
@@ -180,7 +196,9 @@ def run_real_training(config: RunConfig) -> int:
             "lr_scheduler_type": config.optim.get("schedule", "cosine"),
             "seed": 3407,
             "report_to": "none",
-            "dataset_text_field": "text",
+            # Explicitly restrict loss to the assistant completion. This is
+            # supported because the dataset above is prompt-completion shaped.
+            "completion_only_loss": True,
             "packing": config.train.get("packing", False),
             # old and new names for the sequence-length cap
             "max_seq_length": config.train.get("max_seq_len", 2048),

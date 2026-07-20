@@ -19,7 +19,7 @@ TRAIN_MODES = {
     "sft", "dpo", "cpo", "orpo", "grpo", "online_dpo", "xpo",
     "rlhf_reinforce", "ppo",
 }
-DATA_SOURCES = {"hf", "local", "synthetic", "klayer"}
+DATA_SOURCES = {"hf", "local", "synthetic", "klayer", "multi"}
 ADAPTER_TYPES = {"lora", "dora", "qlora", "full", "qat"}
 SCHEDULES = {"cosine", "linear", "constant"}
 BACKEND_KINDS = {"auto", "cuda", "rocm", "mps", "cpu"}

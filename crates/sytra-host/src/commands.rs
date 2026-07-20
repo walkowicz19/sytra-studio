@@ -3,7 +3,7 @@ use crate::{
     run_archive::RunArchive,
 };
 use sytra_contracts::{
-    guider::{Compatibility, Guider, HardwareCapabilities, TrainRecipe},
+    guider::{Compatibility, Guider, HardwareCapabilities, TrainRecipe, ModelCatalogEntry},
     merge_config::{MergeMethod, Verdict},
     operation::{OpRecord, OpStatus, Operation, TrainSpec},
     TelemetryLine,
@@ -68,12 +68,13 @@ pub fn start_op(
             // Resource guard check for merge
             let mut resolved_models = Vec::new();
             for m_ref in &model_refs {
-                if let Some(entry) = guider.resolve_model(m_ref) {
+                if let Some(entry) = resolve_model_with_fallback(guider, m_ref) {
                     resolved_models.push(entry);
                 }
             }
+            let resolved_refs: Vec<&ModelCatalogEntry> = resolved_models.iter().collect();
             guard
-                .check_merge(&resolved_models, spec.config.merge_method, false)
+                .check_merge(&resolved_refs, spec.config.merge_method, true)
                 .map_err(|e| e.to_string())?;
 
             Operation::Merge(spec)
@@ -194,4 +195,65 @@ pub fn merge_check(
     guider: &Guider,
 ) -> Result<Compatibility, String> {
     Ok(guider.merge_check_with_base(base_model.as_deref(), &model_refs, method))
+}
+
+fn resolve_model_with_fallback(guider: &Guider, m_ref: &str) -> Option<ModelCatalogEntry> {
+    if let Some(entry) = guider.resolve_model(m_ref) {
+        return Some(entry.clone());
+    }
+
+    let lower = m_ref.to_lowercase();
+    let mut param_count = 7_000_000_000; // default to 7B
+
+    // Extract parameters from name like -7b, -70b
+    if let Some(pos) = lower.find('b') {
+        let chars: Vec<char> = lower[..pos].chars().collect();
+        let mut num_str = String::new();
+        for c in chars.into_iter().rev() {
+            if c.is_ascii_digit() || c == '.' {
+                num_str.insert(0, c);
+            } else if !num_str.is_empty() {
+                break;
+            }
+        }
+        if let Ok(num) = num_str.parse::<f64>() {
+            param_count = (num * 1_000_000_000.0) as u64;
+        }
+    } else {
+        // Fallback: estimate from local directory if present
+        if let Ok(metadata) = std::fs::metadata(m_ref) {
+            if metadata.is_dir() {
+                let mut total_bytes = 0;
+                if let Ok(entries) = std::fs::read_dir(m_ref) {
+                    for entry in entries.flatten() {
+                        if let Ok(meta) = entry.metadata() {
+                            if meta.is_file() {
+                                let name = entry.file_name().to_string_lossy().to_lowercase();
+                                if name.ends_with(".safetensors") || name.ends_with(".bin") || name.ends_with(".pt") {
+                                    total_bytes += meta.len();
+                                }
+                            }
+                        }
+                    }
+                }
+                if total_bytes > 0 {
+                    param_count = total_bytes / 2;
+                }
+            }
+        }
+    }
+
+    Some(ModelCatalogEntry {
+        model_id: m_ref.to_string(),
+        name: m_ref.to_string(),
+        param_count,
+        architecture: "Qwen2".to_string(),
+        dtype: "bfloat16".to_string(),
+        moe_active_params: None,
+        license: "apache-2.0".to_string(),
+        default_target_modules: vec![],
+        tokenizer_id: m_ref.to_string(),
+        use_case_tags: vec![],
+        benchmark_hint: String::new(),
+    })
 }

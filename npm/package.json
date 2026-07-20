@@ -1,0 +1,23 @@
+{
+  "name": "sytra-studio",
+  "version": "1.0.0",
+  "description": "Rapid CLI installer and runner for Sytra Studio (desktop UI and MCP server)",
+  "main": "bin/sytra.js",
+  "bin": {
+    "sytra": "bin/sytra.js"
+  },
+  "preferGlobal": true,
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "sytra",
+    "mcp",
+    "fine-tuning",
+    "mergekit",
+    "tauri",
+    "llm"
+  ],
+  "author": "",
+  "license": "MIT"
+}

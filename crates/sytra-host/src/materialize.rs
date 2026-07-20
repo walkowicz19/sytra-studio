@@ -22,8 +22,8 @@ pub async fn materialize_dataset_for_config(
             if datasets.is_empty() {
                 return Err("No datasets provided".to_string());
             }
-            if datasets.len() > 5 {
-                return Err("Too many datasets (maximum limit is 5)".to_string());
+            if datasets.len() > 150 {
+                return Err("Too many datasets (maximum limit is 150)".to_string());
             }
 
             let mut materialized_paths = Vec::new();

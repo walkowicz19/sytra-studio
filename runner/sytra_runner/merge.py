@@ -115,6 +115,175 @@ def check_task_vector_kinship(config: MergeConfig) -> str | None:
     return None
 
 
+def get_system_resources() -> tuple[int, float]:
+    import multiprocessing
+    import sys
+    
+    cores = multiprocessing.cpu_count()
+    ram_gb = 16.0  # default fallback
+    
+    if sys.platform == "win32":
+        import ctypes
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        try:
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                ram_gb = stat.ullTotalPhys / (1024 ** 3)
+        except Exception:
+            pass
+    else:
+        try:
+            ram_gb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / (1024 ** 3)
+        except Exception:
+            pass
+            
+    return cores, ram_gb
+
+
+def estimate_model_params_from_path(model_path: str) -> float:
+    if not os.path.exists(model_path):
+        return 0.0
+    total_bytes = 0
+    if os.path.isdir(model_path):
+        for root, _, files in os.walk(model_path):
+            for f in files:
+                if f.endswith((".safetensors", ".bin", ".pt")):
+                    total_bytes += os.path.getsize(os.path.join(root, f))
+    elif os.path.isfile(model_path):
+        total_bytes = os.path.getsize(model_path)
+    
+    return total_bytes / (2 * 1024 * 1024 * 1024)
+
+
+def estimate_model_params(model_ref: str) -> float:
+    if os.path.exists(model_ref):
+        return estimate_model_params_from_path(model_ref)
+    
+    import re
+    m = re.search(r'[-_]([0-9]+[.]?[0-9]*)[bb]', model_ref.lower())
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return 7.0
+
+
+def configure_safety_limits(model_refs: list[str]) -> tuple[int, dict[str, str]]:
+    cores, ram_gb = get_system_resources()
+    
+    # 1. Determine priority class and thread caps
+    if ram_gb <= 16.5: # Severe control (8-16 GB)
+        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+        threads = min(2, cores)
+        category = "Severe Control (8-16GB RAM)"
+    elif ram_gb <= 32.5: # Strict control (32 GB)
+        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+        threads = min(4, max(2, cores // 2))
+        category = "Strict Control (32GB RAM)"
+    elif ram_gb <= 64.5: # Balanced control (64 GB)
+        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+        threads = min(8, max(4, cores - 2))
+        category = "Balanced Control (64GB RAM)"
+    else: # High performance (> 64 GB)
+        priority = 0x00000020 # NORMAL_PRIORITY_CLASS
+        threads = max(4, cores - 1)
+        category = "High Performance (>64GB RAM)"
+
+    # Set priority for current process
+    import sys
+    if sys.platform == "win32":
+        import ctypes
+        try:
+            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), priority)
+        except Exception:
+            pass
+
+    # Create thread environment dictionary
+    env_vars = {
+        "OMP_NUM_THREADS": str(threads),
+        "MKL_NUM_THREADS": str(threads),
+        "OPENBLAS_NUM_THREADS": str(threads),
+        "VECLIB_MAXIMUM_THREADS": str(threads),
+        "NUMEXPR_NUM_THREADS": str(threads),
+    }
+    
+    # Apply to current process environment
+    for k, v in env_vars.items():
+        os.environ[k] = v
+        
+    try:
+        import torch
+        torch.set_num_threads(threads)
+        torch.set_num_interop_threads(threads)
+    except ImportError:
+        pass
+
+    # 2. Check model parameters and print warnings
+    warnings = []
+    for ref in model_refs:
+        params = estimate_model_params(ref)
+        if ram_gb <= 16.5 and params >= 6.5:
+            warnings.append(
+                f"WARNING: Model '{ref}' (~{params:.1f}B params) exceeds recommended memory size for {category}. "
+                f"Merging or converting this model may cause high paging and system slowdown."
+            )
+        elif ram_gb <= 32.5 and params >= 12.5:
+            warnings.append(
+                f"WARNING: Model '{ref}' (~{params:.1f}B params) exceeds recommended memory size for {category}."
+            )
+        elif ram_gb <= 64.5 and params >= 29.5:
+            warnings.append(
+                f"WARNING: Model '{ref}' (~{params:.1f}B params) exceeds recommended memory size for {category}."
+            )
+
+    for w in warnings:
+        telemetry.emit_log(w, stream="stderr")
+        print(w, file=sys.stderr)
+
+    return threads, env_vars
+
+
+def _merge_lora_adapter(adapter_path: str, base_model: str, output_path: str):
+    import gc
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+    
+    configure_safety_limits([base_model, adapter_path])
+    
+    telemetry.emit_log(f"Merging LoRA adapter {adapter_path} into base model {base_model}...", stream="stdout")
+    
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model,
+        torch_dtype=torch.bfloat16,
+        low_cpu_mem_usage=True,
+        device_map="cpu"
+    )
+    gc.collect()
+    
+    model = PeftModel.from_pretrained(model, adapter_path).merge_and_unload()
+    gc.collect()
+    
+    os.makedirs(output_path, exist_ok=True)
+    model.save_pretrained(output_path, safe_serialization=True, max_shard_size="2GB")
+    
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    tokenizer.save_pretrained(output_path)
+    telemetry.emit_log(f"LoRA merge completed: saved to {output_path}", stream="stdout")
+
+
 def write_mergekit_config(config_path: str) -> str:
     """Translate a Sytra merge.yaml into a mergekit-native config.
 
@@ -137,6 +306,34 @@ def write_mergekit_config(config_path: str) -> str:
     tok_source = (raw.get("tokenizer") or {}).get("source")
     if tok_source and tok_source != "base":
         mk["tokenizer_source"] = tok_source
+
+    # Preprocess models to merge any LoRA adapters
+    models = mk.get("models") or []
+    for model_entry in models:
+        model_ref = model_entry.get("model") if isinstance(model_entry, dict) else model_entry
+        if not model_ref or not isinstance(model_ref, str):
+            continue
+        
+        if os.path.isdir(model_ref) and os.path.exists(os.path.join(model_ref, "adapter_config.json")):
+            import json as _json
+            with open(os.path.join(model_ref, "adapter_config.json"), "r") as f:
+                adapter_cfg = _json.load(f)
+            base_model = adapter_cfg.get("base_model_name_or_path") or raw.get("base_model")
+            if not base_model:
+                raise ValueError(f"Could not determine base model for adapter: {model_ref}")
+            
+            import hashlib
+            h = hashlib.md5(model_ref.encode("utf-8")).hexdigest()[:8]
+            temp_dir = os.path.join("runs", "temp_merged", f"adapter-{h}")
+            
+            if not os.path.exists(os.path.join(temp_dir, "config.json")):
+                _merge_lora_adapter(model_ref, base_model, temp_dir)
+            
+            if isinstance(model_entry, dict):
+                model_entry["model"] = temp_dir
+            else:
+                idx = models.index(model_entry)
+                models[idx] = temp_dir
 
     out_path = config_path + ".mergekit.yaml"
     with open(out_path, "w", encoding="utf-8") as f:
@@ -191,6 +388,15 @@ def run_real_merge(config: MergeConfig, config_path: str) -> int:
     env["PYTHONIOENCODING"] = "utf-8"
     # Never let HF fall into an interactive auth prompt inside a GUI child.
     env["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = env.get("HF_HUB_DISABLE_IMPLICIT_TOKEN", "0")
+    
+    # Configure safety limits dynamically for the merge models
+    model_refs = [entry["model"] if isinstance(entry, dict) else entry for entry in config.models]
+    if config.base_model:
+        model_refs.append(config.base_model)
+    _, safety_env = configure_safety_limits(model_refs)
+    
+    # Update Popen environment dict with safety thread configurations
+    env.update(safety_env)
 
     mergekit_config = write_mergekit_config(config_path)
     cmd = [

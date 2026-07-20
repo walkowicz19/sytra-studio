@@ -479,6 +479,14 @@ impl Server {
         let kind = args.get("kind").and_then(|v| v.as_str()).unwrap_or("merge");
         let ws = &self.workspace;
 
+        // Detect effective RAM to decide whether to use disk-backed temp files during
+        // GGUF conversion. On machines with <= 20 GB RAM a 7B model at Q8_0 pushes the
+        // converter past the physical memory limit and triggers an OOM kill.
+        let detected_ram_mb = BackendResolver::detect_system_ram_mb();
+        let settings = sytra_host::settings::AppSettings::load(ws);
+        let effective_ram_mb = settings.effective_main_memory_mb(detected_ram_mb);
+        let low_ram = effective_ram_mb <= 20_480;
+
         let converter = ws
             .join(".tools")
             .join("llama.cpp")
@@ -514,17 +522,30 @@ impl Server {
                 "why": "Training outputs a LoRA adapter, not a full model. It must be merged into its base model before GGUF conversion.",
                 "command_env": train_py.display().to_string(),
                 "python_snippet": format!(
-                    "from transformers import AutoModelForCausalLM, AutoTokenizer\nfrom peft import PeftModel\nimport torch\nmodel = AutoModelForCausalLM.from_pretrained('<base model id>', torch_dtype=torch.bfloat16, low_cpu_mem_usage=True)\nmodel = PeftModel.from_pretrained(model, r'{artifact}').merge_and_unload()\nmodel.save_pretrained(r'{merged_dir}', safe_serialization=True, max_shard_size='2GB')\nAutoTokenizer.from_pretrained(r'{artifact}').save_pretrained(r'{merged_dir}')"
+                    "from transformers import AutoModelForCausalLM, AutoTokenizer\nfrom peft import PeftModel\nimport torch\nimport gc\nprint('Loading base model...')\nmodel = AutoModelForCausalLM.from_pretrained('<base model id>', torch_dtype=torch.bfloat16, low_cpu_mem_usage=True, device_map='cpu')\ngc.collect()\nprint('Loading adapter and merging...')\nmodel = PeftModel.from_pretrained(model, r'{artifact}').merge_and_unload()\ngc.collect()\nprint('Saving merged model...')\nmodel.save_pretrained(r'{merged_dir}', safe_serialization=True, max_shard_size='2GB')\nAutoTokenizer.from_pretrained(r'{artifact}').save_pretrained(r'{merged_dir}')\nprint('Merge complete!')"
                 ),
             }));
         }
         steps.push(json!({
             "step": "convert_gguf",
-            "why": "Ollama's own safetensors importer silently produces broken output for some architectures (verified on Qwen2.5) — always convert with llama.cpp. Q8_0 is the best quality/size balance.",
-            "command": format!(
-                "\"{}\" -u \"{}\" \"{merged_dir}\" --outtype q8_0 --outfile model.q8_0.gguf",
-                merge_py.display(), converter.display()
-            ),
+            "why": if low_ram {
+                format!("Ollama's own safetensors importer silently produces broken output for some architectures (verified on Qwen2.5) — always convert with llama.cpp. Q8_0 is the best quality/size balance. --use-temp-file is added automatically because your effective RAM ({} MB) is at or below 20 GB — it swaps intermediate tensors to disk to prevent an OOM crash.", effective_ram_mb)
+            } else {
+                "Ollama's own safetensors importer silently produces broken output for some architectures (verified on Qwen2.5) — always convert with llama.cpp. Q8_0 is the best quality/size balance.".to_string()
+            },
+            "command": if low_ram {
+                format!(
+                    "\"{}\" -u \"{}\" \"{merged_dir}\" --outtype q8_0 --outfile model.q8_0.gguf --use-temp-file",
+                    merge_py.display(), converter.display()
+                )
+            } else {
+                format!(
+                    "\"{}\" -u \"{}\" \"{merged_dir}\" --outtype q8_0 --outfile model.q8_0.gguf",
+                    merge_py.display(), converter.display()
+                )
+            },
+            "low_ram_mode": low_ram,
+            "effective_ram_mb": effective_ram_mb,
         }));
         steps.push(json!({
             "step": "modelfile",
