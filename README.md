@@ -44,7 +44,7 @@ cd sytra-studio\ui
 npm ci
 npm run build
 cd ..
-cargo build -p sytra-studio --release
+cargo build -p sytra-studio --release --features custom-protocol
 ```
 
 The Windows executable is written to `target-build/release/sytra-studio.exe`. To run the development UI with Tauri:

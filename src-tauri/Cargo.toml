@@ -30,3 +30,8 @@ mime_guess       = "2"
 tokio            = { version = "1", features = ["full"] }
 sytra-host       = { path = "../crates/sytra-host" }
 sytra-contracts  = { path = "../crates/sytra-contracts" }
+
+[features]
+# This feature is used for production builds where frontend assets are bundled.
+custom-protocol = ["tauri/custom-protocol"]
+
