@@ -177,4 +177,5 @@ npm run check
 
 ## License
 
-Add a license file before redistributing binaries if the project is not intended to remain all-rights-reserved.
+This project is licensed under the [MIT License](LICENSE).
+
