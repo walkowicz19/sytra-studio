@@ -10,6 +10,15 @@
   "engines": {
     "node": ">=16.0.0"
   },
+  "files": [
+    "bin",
+    "runner",
+    "scripts",
+    "prep.js"
+  ],
+  "scripts": {
+    "prepublishOnly": "node prep.js"
+  },
   "keywords": [
     "sytra",
     "mcp",

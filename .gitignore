@@ -20,3 +20,5 @@
 *.exe
 *.log
 .DS_Store
+/npm/runner/
+/npm/scripts/
