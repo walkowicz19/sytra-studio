@@ -30,6 +30,13 @@ Sytra Studio is a local, hardware-aware desktop application and MCP server for f
 
 The first launch provisions `.sytra-envs/train-env` with PyTorch, Transformers, TRL, and Datasets, and `.sytra-envs/merge-env` with MergeKit. This requires internet access and can take several minutes.
 
+> [!IMPORTANT]
+> **Reporting Bugs & Issues:**
+> Please report any bugs, errors, or unexpected behavior you encounter while using Sytra Studio (desktop UI or MCP server) directly on the repository's GitHub Issues page.
+>
+> **Hardware Guidance & Model Sizes:**
+> It is **highly recommended to always check the size of the models** before initiating any merge or fine-tuning operations. Attempting to load, fine-tune, or merge models that exceed your system's hardware limits (available VRAM on GPU, or system RAM on CPU) can result in system instability, performance throttling, out-of-memory (OOM) crashes, or temporary freezing of your operating system.
+
 ## Install the desktop UI
 
 ### From a GitHub release
