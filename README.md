@@ -175,6 +175,10 @@ cd ui
 npm run check
 ```
 
+## Credits & Acknowledgements
+
+Sytra Studio's design and user interface layout are inspired by [MLX-LoRA-Studio](https://github.com/Goekdeniz-Guelmez/MLX-LoRA-Studio) by Gökdeniz Gülmez.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
