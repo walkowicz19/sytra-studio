@@ -11,6 +11,7 @@
   import Guider from './components/Guider.svelte'
   import Help from './components/Help.svelte'
   import Settings from './components/Settings.svelte'
+  import ModelHub from './components/ModelHub.svelte'
   import Toast from './components/Toast.svelte'
   import { onMount } from 'svelte'
 
@@ -25,7 +26,9 @@
   <main class="main">
     {#key `${tabStore.active}-${uiMode.advanced}`}
       <div class="pane animate-in">
-        {#if tabStore.active === 'train'}
+        {#if tabStore.active === 'models'}
+          <ModelHub />
+        {:else if tabStore.active === 'train'}
           {#if uiMode.advanced}<TrainForm />{:else}<SimpleTrain />{/if}
         {:else if tabStore.active === 'merge'}
           {#if uiMode.advanced}<MergeForm />{:else}<SimpleMerge />{/if}
@@ -60,7 +63,9 @@
     height: 100vh;
     display: flex;
     overflow: hidden;
-    background: var(--color-canvas);
+    position: relative;
+    z-index: 1;
+    background: transparent;
   }
   .main {
     flex: 1;
@@ -76,6 +81,8 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    padding: var(--space-4);
+    box-sizing: border-box;
   }
   .live-panel {
     border-top: 1px solid var(--color-border);

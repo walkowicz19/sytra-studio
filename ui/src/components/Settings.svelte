@@ -1,14 +1,71 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { tabStore, setTab, run, hwStore, themeStore, toggleTheme, uiMode, toggleUiMode, pushToast } from '../store.svelte'
+  import { tabStore, setTab, run, hwStore, themeStore, toggleTheme, uiMode, toggleUiMode, pushToast, customThemeStore, applyCustomTheme } from '../store.svelte'
   import { t, LOCALES, localeStore, setLocale } from '../i18n.svelte'
   import type { Locale } from '../i18n.svelte'
   import { api } from '../api'
 
-  // Storage (HF cache / model downloads) location
   let cacheDir = $state('')
   let detectedRamMb = $state(0)
   let memoryChoice = $state('auto')
+
+  let defaultContext = $state<number>(4096)
+  let defaultTemp = $state<number>(0.7)
+  let enableFlashAttn = $state<boolean>(true)
+  let kvCacheQuant = $state<string>('q8_0')
+  let vramLimitMb = $state<number>(8192)
+  let cpuKvCache = $state<boolean>(false)
+
+  // Visual Studio preview auto-updates live
+  $effect(() => {
+    // Touch any theme property to trigger re-render
+    void customThemeStore.accentColor
+    void customThemeStore.effect
+    void customThemeStore.bgType
+  })
+
+  const ACCENT_PRESETS = [
+    { label: 'Sytra Red',      hex: '#e03535' },
+    { label: 'Cyber Violet',   hex: '#8b5cf6' },
+    { label: 'Neon Cyan',      hex: '#06b6d4' },
+    { label: 'Emerald Glow',   hex: '#10b981' },
+    { label: 'Amber Flame',    hex: '#f59e0b' },
+    { label: 'Pink Neon',      hex: '#ec4899' },
+    { label: 'Solar Orange',   hex: '#f97316' },
+    { label: 'Ice Blue',       hex: '#38bdf8' },
+    { label: 'Lime Acid',      hex: '#a3e635' },
+    { label: 'Magenta',        hex: '#e879f9' },
+    { label: 'Gold',           hex: '#eab308' },
+    { label: 'Coral',          hex: '#fb7185' },
+  ]
+
+  const EFFECTS = [
+    { id: 'none',          label: 'Standard',       icon: '⬜', desc: 'Clean flat UI' },
+    { id: 'glassmorphism', label: 'Glassmorphism',  icon: '🪟', desc: 'Frosted glass cards with blur' },
+    { id: 'frosted',       label: 'Frosted',        icon: '❄️', desc: 'Heavy frost, matte surfaces' },
+    { id: 'glow',          label: 'Neon Glow',      icon: '✨', desc: 'Luminous brand color glow' },
+    { id: 'holographic',   label: 'Holographic',    icon: '🌈', desc: 'Rainbow iridescent shimmer' },
+    { id: 'cyberpunk',     label: 'Cyberpunk',      icon: '⚡', desc: 'Hard borders, scanline accents' },
+    { id: 'scanlines',     label: 'Scanlines',      icon: '📺', desc: 'CRT scanline overlay' },
+    { id: 'matrix',        label: 'Matrix',         icon: '🟩', desc: 'Green code rain aesthetic' },
+  ] as const
+
+  const BG_TYPES = [
+    { id: 'default',  label: 'Default',          desc: 'System dark/light theme' },
+    { id: 'gradient', label: 'Gradient',          desc: 'Linear or radial gradient' },
+    { id: 'mesh',     label: 'Mesh Gradient',     desc: 'Multi-point mesh blur gradient' },
+    { id: 'aurora',   label: 'Aurora',            desc: 'Northern lights gradient' },
+    { id: 'image',    label: 'Custom Image',      desc: 'Any image URL or local path' },
+    { id: 'gif',      label: 'Animated GIF',      desc: 'Live animated background' },
+  ] as const
+
+  const FONT_PRESETS = [
+    { id: 'system',    label: 'System Default',    preview: 'Aa' },
+    { id: 'inter',     label: 'Inter',             preview: 'Aa' },
+    { id: 'outfit',    label: 'Outfit',            preview: 'Aa' },
+    { id: 'geist',     label: 'Geist',             preview: 'Aa' },
+    { id: 'jetbrains', label: 'JetBrains Mono',   preview: 'Aa' },
+  ] as const
 
   onMount(async () => {
     try {
@@ -16,6 +73,12 @@
       cacheDir = settings.hf_cache_dir
       detectedRamMb = settings.detected_ram_mb
       memoryChoice = settings.main_memory_limit_mb?.toString() ?? 'auto'
+      if (settings.default_context_window) defaultContext = settings.default_context_window
+      if (settings.default_temperature !== undefined) defaultTemp = settings.default_temperature
+      if (settings.enable_flash_attention !== undefined) enableFlashAttn = settings.enable_flash_attention
+      if (settings.kv_cache_quant) kvCacheQuant = settings.kv_cache_quant
+      if (settings.vram_limit_mb) vramLimitMb = settings.vram_limit_mb
+      if (settings.cpu_kv_cache !== undefined) cpuKvCache = settings.cpu_kv_cache
     } catch {}
   })
 
@@ -28,9 +91,7 @@
         cacheDir = res.hf_cache_dir
         pushToast('success', t('sidebar.storageSaved'))
       }
-    } catch (e) {
-      pushToast('error', String(e))
-    }
+    } catch (e) { pushToast('error', String(e)) }
   }
 
   async function changeMemoryLimit(event: Event) {
@@ -39,10 +100,34 @@
       const result = await api.setMainMemoryLimit(value === 'auto' ? null : Number(value))
       memoryChoice = result.main_memory_limit_mb?.toString() ?? 'auto'
       pushToast('success', 'Main memory limit saved')
-    } catch (e) {
-      pushToast('error', String(e))
-    }
+    } catch (e) { pushToast('error', String(e)) }
   }
+
+  function set<K extends keyof typeof customThemeStore>(key: K, val: (typeof customThemeStore)[K]) {
+    (customThemeStore as any)[key] = val
+    applyCustomTheme()
+  }
+
+  function resetTheme() {
+    customThemeStore.accentColor = '#e03535'
+    customThemeStore.bgType = 'default'
+    customThemeStore.bgUrl = ''
+    customThemeStore.bgOpacity = 0.15
+    customThemeStore.effect = 'none'
+    customThemeStore.glassBlur = 16
+    customThemeStore.glowIntensity = 60
+    customThemeStore.gradientDir = 'radial'
+    customThemeStore.gradientSecond = '#1e1b4b'
+    customThemeStore.fontFamily = 'system'
+    customThemeStore.animSpeed = 'normal'
+    customThemeStore.borderRadius = 'default'
+    customThemeStore.sidebarBlur = false
+    customThemeStore.cardShadow = 'subtle'
+    applyCustomTheme()
+  }
+
+  // Active visual studio section tabs
+  let vsSection = $state<'colors' | 'effects' | 'background' | 'layout'>('colors')
 </script>
 
 <div class="page-layout">
@@ -55,95 +140,97 @@
 
   <div class="page-content">
     <div class="page-form-area">
-      <div class="grid-2 animate-in">
-        <!-- Preferences (Language & Advanced Mode) -->
-        <section class="card">
-          <div class="card-header">
-            <span class="text-label" style="display: flex; align-items: center; gap: var(--space-2)">
-              <i class="bi bi-sliders"></i> {t('nav.settings')}
-            </span>
-          </div>
-          <div class="card-body" style="display: flex; flex-direction: column; gap: var(--space-4)">
-            <!-- Language Switcher -->
-            <div class="settings-item">
+      <div class="settings-grid animate-in">
+
+        <!-- ── LEFT COLUMN ─────────────────────────────── -->
+        <div class="settings-col">
+
+          <!-- Preferences -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-sliders"></i> {t('nav.settings')}
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-4)">
+              <div class="settings-item">
+                <div class="settings-info">
+                  <label for="select-language" class="settings-label">{t('sidebar.language')}</label>
+                  <p class="settings-hint">Interface language</p>
+                </div>
+                <div class="settings-control">
+                  <select class="select" value={localeStore.current}
+                    onchange={(e) => setLocale((e.currentTarget as HTMLSelectElement).value as Locale)}
+                    id="select-language">
+                    {#each LOCALES as l}
+                      <option value={l.id}>{l.label}</option>
+                    {/each}
+                  </select>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <span class="settings-label">{t('sidebar.advancedMode')}</span>
+                  <p class="settings-hint">{uiMode.advanced ? t('sidebar.allSettings') : t('sidebar.guided')}</p>
+                </div>
+                <div class="settings-control">
+                  <label class="toggle" id="toggle-ui-mode">
+                    <input type="checkbox" checked={uiMode.advanced} onchange={toggleUiMode} />
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <span class="settings-label">Dark Mode</span>
+                  <p class="settings-hint">Toggle between dark and light theme</p>
+                </div>
+                <div class="settings-control">
+                  <label class="toggle" id="toggle-dark-mode">
+                    <input type="checkbox" checked={themeStore.dark} onchange={toggleTheme} />
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Model Storage -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-folder2"></i> {t('sidebar.storage')}
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
               <div class="settings-info">
-                <label for="select-language" class="settings-label">{t('sidebar.language')}</label>
-                <p class="settings-hint">Choose your preferred language for the interface.</p>
+                <span class="settings-label">{t('sidebar.storage')}</span>
+                <p class="settings-hint">{t('sidebar.storagePick')}</p>
               </div>
-              <div class="settings-control">
-                <select
-                  class="select"
-                  value={localeStore.current}
-                  onchange={(e) => setLocale((e.currentTarget as HTMLSelectElement).value as Locale)}
-                  aria-label={t('sidebar.language')}
-                  id="select-language"
-                >
-                  {#each LOCALES as l}
-                    <option value={l.id}>{l.label}</option>
-                  {/each}
-                </select>
+              <div class="picker-row">
+                <input type="text" class="input input-mono" readonly value={cacheDir} style="flex:1" />
+                <button class="btn btn-secondary" onclick={pickCacheDir} id="btn-pick-cache-dir" style="height:34px">
+                  <i class="bi bi-folder2-open" style="font-size:13px;margin-right:var(--space-2)"></i> Browse
+                </button>
               </div>
             </div>
+          </section>
 
-            <div class="divider"></div>
-
-            <!-- Advanced Mode Toggle -->
-            <div class="settings-item">
+          <!-- Memory Limit -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-cpu"></i> Memory limit
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
               <div class="settings-info">
-                <span class="settings-label">{t('sidebar.advancedMode')}</span>
-                <p class="settings-hint">{uiMode.advanced ? t('sidebar.allSettings') : t('sidebar.guided')}</p>
+                <label for="select-memory-limit" class="settings-label">{t('settings.mainMemory')}</label>
+                <p class="settings-hint">Limit Sytra's host RAM allocation. Automatic is recommended.</p>
               </div>
-              <div class="settings-control">
-                <label class="toggle" id="toggle-ui-mode">
-                  <input type="checkbox" checked={uiMode.advanced} onchange={toggleUiMode} />
-                  <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Model Storage -->
-        <section class="card">
-          <div class="card-header">
-            <span class="text-label" style="display: flex; align-items: center; gap: var(--space-2)">
-              <i class="bi bi-folder2"></i> {t('sidebar.storage')}
-            </span>
-          </div>
-          <div class="card-body" style="display: flex; flex-direction: column; gap: var(--space-3)">
-            <div class="settings-info">
-              <span class="settings-label">{t('sidebar.storage')}</span>
-              <p class="settings-hint">{t('sidebar.storagePick')}</p>
-            </div>
-            <div class="picker-row">
-              <input type="text" class="input input-mono" readonly value={cacheDir} style="flex: 1" />
-              <button
-                class="btn btn-secondary"
-                onclick={pickCacheDir}
-                id="btn-pick-cache-dir"
-                aria-label={t('sidebar.storagePick')}
-                style="height: 34px"
-              >
-                <i class="bi bi-folder2-open" style="font-size: 13px; margin-right: var(--space-2)"></i> Browse
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <!-- Memory Limit -->
-        <section class="card">
-          <div class="card-header">
-            <span class="text-label" style="display: flex; align-items: center; gap: var(--space-2)">
-              <i class="bi bi-cpu"></i> Memory limit
-            </span>
-          </div>
-          <div class="card-body" style="display: flex; flex-direction: column; gap: var(--space-3)">
-            <div class="settings-info">
-              <label for="select-memory-limit" class="settings-label">{t('settings.mainMemory')}</label>
-              <p class="settings-hint">Limit Sytra's allocation of host RAM. Recommended option is Automatic.</p>
-            </div>
-            <div class="settings-control full-width">
-              <select id="select-memory-limit" class="select" value={memoryChoice} onchange={changeMemoryLimit} aria-label="Main memory limit">
+              <select id="select-memory-limit" class="select" value={memoryChoice} onchange={changeMemoryLimit}>
                 <option value="auto">Automatic</option>
                 {#if detectedRamMb > 0}
                   <option value={Math.floor(detectedRamMb * 0.5)}>50% ({(detectedRamMb * 0.5 / 1024).toFixed(0)} GB)</option>
@@ -152,109 +239,712 @@
                 {/if}
               </select>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- Hardware Info -->
-        <section class="card">
-          <div class="card-header">
-            <span class="text-label" style="display: flex; align-items: center; gap: var(--space-2)">
-              <i class="bi bi-info-circle"></i> {t('sidebar.hardware')}
-            </span>
-          </div>
-          <div class="card-body">
-            {#if hwStore.info}
-              <div class="hw-grid">
-                <div class="hw-row">
-                  <span class="hw-label">{t('sidebar.backend')}</span>
-                  <span class="badge badge-info">{hwStore.info.backend.toUpperCase()}</span>
+          <!-- Model Inference & Context Window Parameters -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-cpu-fill"></i> Model Inference & Context Window
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-4)">
+              <div class="settings-item">
+                <div class="settings-info">
+                  <label for="select-default-context" class="settings-label">Default Context Window</label>
+                  <p class="settings-hint">Max context tokens. Lowering to 4K/8K prevents KV cache VRAM freezing.</p>
                 </div>
-                <div class="hw-row">
-                  <span class="hw-label">VRAM</span>
-                  <span class="hw-val">{(hwStore.info.vram_mb / 1024).toFixed(1)} GB</span>
-                </div>
-                <div class="hw-row">
-                  <span class="hw-label">RAM</span>
-                  <span class="hw-val">{(hwStore.info.ram_mb / 1024).toFixed(1)} GB</span>
+                <div class="settings-control">
+                  <select id="select-default-context" class="select" bind:value={defaultContext}>
+                    <option value={2048}>2048 tokens (2K - Low VRAM)</option>
+                    <option value={4096}>4096 tokens (4K - Recommended)</option>
+                    <option value={8192}>8192 tokens (8K - Balanced)</option>
+                    <option value={16384}>16384 tokens (16K - High VRAM)</option>
+                  </select>
                 </div>
               </div>
-            {:else}
-              <span class="text-small">{t('sidebar.detecting')}</span>
-            {/if}
-          </div>
-        </section>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <label for="input-default-temp" class="settings-label">Sampling Temperature</label>
+                  <p class="settings-hint">Randomness for generation ({defaultTemp})</p>
+                </div>
+                <div class="settings-control">
+                  <input type="range" id="input-default-temp" min="0.0" max="1.5" step="0.05" bind:value={defaultTemp} style="width: 140px;" />
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <label for="select-kv-quant" class="settings-label">KV Cache Precision</label>
+                  <p class="settings-hint">Quantize KV cache to save 50-75% VRAM</p>
+                </div>
+                <div class="settings-control">
+                  <select id="select-kv-quant" class="select" bind:value={kvCacheQuant}>
+                    <option value="q8_0">Q8_0 (8-bit - Recommended)</option>
+                    <option value="q4_0">Q4_0 (4-bit - Max Savings)</option>
+                    <option value="fp16">FP16 (16-bit Full Precision)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <label for="select-vram-limit" class="settings-label">VRAM Model Weights Ceiling</label>
+                  <p class="settings-hint">Hard VRAM cap for model weights (Leaves ~2-3 GB for CUDA/desktop).</p>
+                </div>
+                <div class="settings-control">
+                  <select id="select-vram-limit" class="select" bind:value={vramLimitMb}>
+                    <option value={6144}>6144 MB (6 GB - Low VRAM GPUs)</option>
+                    <option value={8192}>8192 MB (8 GB - Recommended for 12GB GPUs)</option>
+                    <option value={9728}>9728 MB (9.5 GB - Tight Headroom)</option>
+                    <option value={10240}>10240 MB (10 GB - Max Allocation)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="settings-item">
+                <div class="settings-info">
+                  <span class="settings-label">Offload KV Cache to CPU RAM</span>
+                  <p class="settings-hint">Store 100% of KV Cache in System RAM to completely prevent GPU VRAM freezing.</p>
+                </div>
+                <div class="settings-control">
+                  <label class="toggle" id="toggle-cpu-kv-cache">
+                    <input type="checkbox" bind:checked={cpuKvCache} />
+                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Hardware Info -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-info-circle"></i> {t('sidebar.hardware')}
+              </span>
+            </div>
+            <div class="card-body">
+              {#if hwStore.info}
+                <div class="hw-grid">
+                  <div class="hw-row">
+                    <span class="hw-label">{t('sidebar.backend')}</span>
+                    <span class="badge badge-info">{hwStore.info.backend.toUpperCase()}</span>
+                  </div>
+                  <div class="hw-row">
+                    <span class="hw-label">VRAM</span>
+                    <span class="hw-val">{(hwStore.info.vram_mb / 1024).toFixed(1)} GB</span>
+                  </div>
+                  <div class="hw-row">
+                    <span class="hw-label">RAM</span>
+                    <span class="hw-val">{(hwStore.info.ram_mb / 1024).toFixed(1)} GB</span>
+                  </div>
+                </div>
+              {:else}
+                <span class="text-small">{t('sidebar.detecting')}</span>
+              {/if}
+            </div>
+          </section>
+        </div>
+
+        <!-- ── RIGHT COLUMN — Visual Studio ───────────── -->
+        <div class="settings-col">
+          <section class="card vs-card">
+            <div class="card-header vs-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-palette2"></i> Visual Studio
+                <span class="vs-badge">FULL CUSTOMIZE</span>
+              </span>
+              <button class="btn-reset" onclick={resetTheme} title="Reset to defaults">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset
+              </button>
+            </div>
+
+            <!-- Live preview strip -->
+            <div class="preview-strip" style="
+              background: {customThemeStore.accentColor}18;
+              border-bottom: 2px solid {customThemeStore.accentColor}44;
+            ">
+              <div class="preview-pill" style="background:{customThemeStore.accentColor}">Accent</div>
+              <div class="preview-pill preview-ghost">Effect: <b>{customThemeStore.effect}</b></div>
+              <div class="preview-pill preview-ghost">BG: <b>{customThemeStore.bgType}</b></div>
+              <div class="preview-mini-card">
+                <span style="color:{customThemeStore.accentColor}">✦</span> Preview Card
+              </div>
+            </div>
+
+            <!-- Section tabs -->
+            <div class="vs-tabs">
+              {#each [
+                { id: 'colors',     icon: 'bi-palette',    label: 'Colors' },
+                { id: 'effects',    icon: 'bi-stars',      label: 'Effects' },
+                { id: 'background', icon: 'bi-image',      label: 'Background' },
+                { id: 'layout',     icon: 'bi-layout-text-sidebar', label: 'Layout' },
+              ] as tab}
+                <button
+                  id="vs-tab-{tab.id}"
+                  class="vs-tab"
+                  class:vs-tab-active={vsSection === tab.id}
+                  onclick={() => vsSection = tab.id as any}
+                >
+                  <i class="bi {tab.icon}"></i> {tab.label}
+                </button>
+              {/each}
+            </div>
+
+            <div class="vs-body">
+
+              <!-- ═══ COLORS ═══ -->
+              {#if vsSection === 'colors'}
+                <div class="vs-section">
+                  <div class="vs-row-label">Accent Color</div>
+                  <div class="color-swatches">
+                    {#each ACCENT_PRESETS as preset}
+                      <button
+                        class="swatch"
+                        class:swatch-active={customThemeStore.accentColor === preset.hex}
+                        style="background:{preset.hex}"
+                        title={preset.label}
+                        onclick={() => set('accentColor', preset.hex)}
+                      ></button>
+                    {/each}
+                    <div class="swatch-custom-wrap" title="Custom HEX">
+                      <i class="bi bi-eyedropper swatch-picker-icon"></i>
+                      <input
+                        type="color"
+                        class="color-picker-hidden"
+                        value={customThemeStore.accentColor}
+                        oninput={(e) => set('accentColor', (e.currentTarget as HTMLInputElement).value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div class="hex-preview-row">
+                    <div class="hex-dot" style="background:{customThemeStore.accentColor}"></div>
+                    <input class="hex-input" type="text" value={customThemeStore.accentColor}
+                      oninput={(e) => { const v = (e.currentTarget as HTMLInputElement).value; if(/^#[0-9a-f]{6}$/i.test(v)) set('accentColor', v) }}
+                    />
+                    <span class="hex-label">Brand Accent</span>
+                  </div>
+
+                  <div class="divider"></div>
+                  <div class="vs-row-label">Gradient Secondary Color</div>
+                  <p class="settings-hint" style="margin-bottom:8px">Used in gradient, mesh, and aurora backgrounds</p>
+                  <div class="hex-preview-row">
+                    <div class="hex-dot" style="background:{customThemeStore.gradientSecond}"></div>
+                    <input class="hex-input" type="text" value={customThemeStore.gradientSecond}
+                      oninput={(e) => { const v = (e.currentTarget as HTMLInputElement).value; if(/^#[0-9a-f]{6}$/i.test(v)) set('gradientSecond', v) }}
+                    />
+                    <input type="color" style="width:28px;height:28px;padding:0;border:none;border-radius:4px;cursor:pointer;background:transparent"
+                      value={customThemeStore.gradientSecond}
+                      oninput={(e) => set('gradientSecond', (e.currentTarget as HTMLInputElement).value)}
+                    />
+                  </div>
+                </div>
+
+              <!-- ═══ EFFECTS ═══ -->
+              {:else if vsSection === 'effects'}
+                <div class="vs-section">
+                  <div class="vs-row-label">Visual Effect Preset</div>
+                  <div class="effect-grid">
+                    {#each EFFECTS as fx}
+                      <button
+                        id="effect-{fx.id}"
+                        class="effect-card"
+                        class:effect-card-active={customThemeStore.effect === fx.id}
+                        onclick={() => set('effect', fx.id)}
+                      >
+                        <span class="effect-icon">{fx.icon}</span>
+                        <span class="effect-name">{fx.label}</span>
+                        <span class="effect-desc">{fx.desc}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  {#if customThemeStore.effect === 'glassmorphism' || customThemeStore.effect === 'frosted'}
+                    <div class="divider" style="margin:12px 0"></div>
+                    <div class="vs-row-label">Glass Blur — {customThemeStore.glassBlur}px</div>
+                    <div class="slider-row">
+                      <span class="slider-label">0</span>
+                      <input type="range" min="0" max="40" step="1" value={customThemeStore.glassBlur}
+                        oninput={(e) => set('glassBlur', parseInt((e.currentTarget as HTMLInputElement).value))}
+                        class="styled-range" style="--fill:{customThemeStore.accentColor}"
+                      />
+                      <span class="slider-label">40px</span>
+                    </div>
+                    <div class="settings-item" style="margin-top:8px">
+                      <div class="settings-info">
+                        <span class="settings-label">Blur Sidebar Too</span>
+                        <p class="settings-hint">Apply blur to the sidebar background</p>
+                      </div>
+                      <label class="toggle">
+                        <input type="checkbox" checked={customThemeStore.sidebarBlur}
+                          onchange={() => set('sidebarBlur', !customThemeStore.sidebarBlur)} />
+                        <div class="toggle-track"><div class="toggle-thumb"></div></div>
+                      </label>
+                    </div>
+                  {/if}
+
+                  {#if customThemeStore.effect === 'glow' || customThemeStore.effect === 'holographic'}
+                    <div class="divider" style="margin:12px 0"></div>
+                    <div class="vs-row-label">Glow Intensity — {customThemeStore.glowIntensity}%</div>
+                    <div class="slider-row">
+                      <span class="slider-label">0</span>
+                      <input type="range" min="0" max="100" step="5" value={customThemeStore.glowIntensity}
+                        oninput={(e) => set('glowIntensity', parseInt((e.currentTarget as HTMLInputElement).value))}
+                        class="styled-range" style="--fill:{customThemeStore.accentColor}"
+                      />
+                      <span class="slider-label">100%</span>
+                    </div>
+                  {/if}
+                </div>
+
+              <!-- ═══ BACKGROUND ═══ -->
+              {:else if vsSection === 'background'}
+                <div class="vs-section">
+                  <div class="vs-row-label">Background Style</div>
+                  <div class="bg-type-grid">
+                    {#each BG_TYPES as bg}
+                      <button
+                        id="bg-{bg.id}"
+                        class="bg-card"
+                        class:bg-card-active={customThemeStore.bgType === bg.id}
+                        onclick={() => set('bgType', bg.id)}
+                      >
+                        <span class="bg-name">{bg.label}</span>
+                        <span class="bg-desc">{bg.desc}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  {#if customThemeStore.bgType === 'gradient'}
+                    <div class="divider" style="margin:12px 0"></div>
+                    <div class="vs-row-label">Gradient Direction</div>
+                    <div class="dir-grid">
+                      {#each [
+                        { id: 'top',          label: '↑ Top' },
+                        { id: 'top-right',    label: '↗ Diagonal' },
+                        { id: 'right',        label: '→ Right' },
+                        { id: 'bottom-right', label: '↘ Diagonal' },
+                        { id: 'bottom',       label: '↓ Bottom' },
+                        { id: 'radial',       label: '⊙ Radial' },
+                      ] as dir}
+                        <button
+                          class="dir-btn"
+                          class:dir-btn-active={customThemeStore.gradientDir === dir.id}
+                          onclick={() => set('gradientDir', dir.id as any)}
+                        >{dir.label}</button>
+                      {/each}
+                    </div>
+                  {/if}
+
+                  {#if customThemeStore.bgType === 'image' || customThemeStore.bgType === 'gif'}
+                    <div class="divider" style="margin:12px 0"></div>
+                    <div class="vs-row-label">Image / GIF URL or Path</div>
+                    <input type="text" class="input input-mono" style="width:100%;margin-bottom:8px"
+                      placeholder="https://example.com/wallpaper.gif"
+                      value={customThemeStore.bgUrl}
+                      oninput={(e) => set('bgUrl', (e.currentTarget as HTMLInputElement).value)}
+                    />
+                  {/if}
+
+                  {#if customThemeStore.bgType !== 'default'}
+                    <div class="divider" style="margin:12px 0"></div>
+                    <div class="vs-row-label">Background Opacity — {Math.round(customThemeStore.bgOpacity * 100)}%</div>
+                    <div class="slider-row">
+                      <span class="slider-label">0%</span>
+                      <input type="range" min="0" max="0.9" step="0.05" value={customThemeStore.bgOpacity}
+                        oninput={(e) => set('bgOpacity', parseFloat((e.currentTarget as HTMLInputElement).value))}
+                        class="styled-range" style="--fill:{customThemeStore.accentColor}"
+                      />
+                      <span class="slider-label">90%</span>
+                    </div>
+                  {/if}
+                </div>
+
+              <!-- ═══ LAYOUT ═══ -->
+              {:else if vsSection === 'layout'}
+                <div class="vs-section">
+                  <div class="vs-row-label">Font Family</div>
+                  <div class="font-grid">
+                    {#each FONT_PRESETS as fp}
+                      <button
+                        id="font-{fp.id}"
+                        class="font-card"
+                        class:font-card-active={customThemeStore.fontFamily === fp.id}
+                        onclick={() => set('fontFamily', fp.id)}
+                      >
+                        <span class="font-preview" style="font-family:{fp.id === 'system' ? 'system-ui' : fp.id === 'jetbrains' ? 'monospace' : fp.label}">{fp.preview}</span>
+                        <span class="font-name">{fp.label}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  <div class="divider" style="margin:12px 0"></div>
+                  <div class="vs-row-label">Border Radius</div>
+                  <div class="radius-grid">
+                    {#each [
+                      { id: 'sharp',   label: 'Sharp',   style: 'border-radius:2px' },
+                      { id: 'default', label: 'Default', style: 'border-radius:6px' },
+                      { id: 'rounded', label: 'Rounded', style: 'border-radius:12px' },
+                    ] as r}
+                      <button
+                        class="radius-btn"
+                        class:radius-btn-active={customThemeStore.borderRadius === r.id}
+                        onclick={() => set('borderRadius', r.id as any)}
+                      >
+                        <div class="radius-preview" style="{r.style};background:{customThemeStore.accentColor}22;border:2px solid {customThemeStore.accentColor}55"></div>
+                        <span>{r.label}</span>
+                      </button>
+                    {/each}
+                  </div>
+
+                  <div class="divider" style="margin:12px 0"></div>
+                  <div class="vs-row-label">Card Shadow</div>
+                  <div class="shadow-grid">
+                    {#each [
+                      { id: 'none',     label: 'None' },
+                      { id: 'subtle',   label: 'Subtle' },
+                      { id: 'elevated', label: 'Elevated' },
+                      { id: 'neon',     label: 'Neon' },
+                    ] as s}
+                      <button
+                        class="shadow-btn"
+                        class:shadow-btn-active={customThemeStore.cardShadow === s.id}
+                        onclick={() => set('cardShadow', s.id as any)}
+                      >{s.label}</button>
+                    {/each}
+                  </div>
+
+                  <div class="divider" style="margin:12px 0"></div>
+                  <div class="vs-row-label">Animation Speed</div>
+                  <div class="anim-grid">
+                    {#each [
+                      { id: 'off',    label: 'Off' },
+                      { id: 'slow',   label: 'Slow' },
+                      { id: 'normal', label: 'Normal' },
+                      { id: 'fast',   label: 'Fast' },
+                    ] as a}
+                      <button
+                        class="anim-btn"
+                        class:anim-btn-active={customThemeStore.animSpeed === a.id}
+                        onclick={() => set('animSpeed', a.id as any)}
+                      >{a.label}</button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </div>
 </div>
 
 <style>
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    gap: var(--space-4);
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .settings-grid { grid-template-columns: 1fr; }
+  }
+  .settings-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
   .settings-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: var(--space-4);
   }
-  .settings-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: 1;
-  }
-  .settings-label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--color-ink);
-  }
-  .settings-hint {
-    font-size: 11px;
-    color: var(--color-ink-ghost);
-    line-height: 1.3;
-  }
-  .settings-control {
-    width: 200px;
-    flex-shrink: 0;
-  }
-  .settings-control.full-width {
-    width: 100%;
-  }
-  .divider {
-    height: 1px;
-    background: var(--color-border);
-  }
-  .picker-row {
-    display: flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-  .hw-grid {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .hw-row {
+  .settings-info { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .settings-label { font-size: 13px; font-weight: 600; color: var(--color-ink); }
+  .settings-hint { font-size: 11px; color: var(--color-ink-ghost); line-height: 1.3; }
+  .settings-control { width: 200px; flex-shrink: 0; }
+  .divider { height: 1px; background: var(--color-border); }
+  .picker-row { display: flex; gap: var(--space-2); align-items: center; }
+  .hw-grid { display: flex; flex-direction: column; gap: var(--space-2); }
+  .hw-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) 0; border-bottom: 1px dashed var(--color-border); }
+  .hw-row:last-child { border-bottom: none; }
+  .hw-label { font-size: 12px; color: var(--color-ink-subtle); }
+  .hw-val { font-size: 12px; font-weight: 500; font-family: var(--font-mono); color: var(--color-ink); }
+  .badge-info { background: var(--color-info-bg); color: var(--color-info); border: 1px solid var(--color-info); }
+
+  /* ── Visual Studio ─────────────────────────────────────────────────── */
+  .vs-card { overflow: hidden; }
+  .vs-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-2) 0;
-    border-bottom: 1px dashed var(--color-border);
   }
-  .hw-row:last-child {
-    border-bottom: none;
+  .vs-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 7px;
+    border-radius: 20px;
+    background: var(--color-brand);
+    color: #fff;
+    margin-left: 6px;
   }
-  .hw-label {
-    font-size: 12px;
+  .btn-reset {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
     color: var(--color-ink-subtle);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 3px 10px;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
   }
-  .hw-val {
+  .btn-reset:hover { color: var(--color-brand); border-color: var(--color-brand); }
+
+  /* Preview strip */
+  .preview-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    flex-wrap: wrap;
+  }
+  .preview-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .preview-ghost {
+    background: var(--color-surface-raised);
+    color: var(--color-ink-subtle);
+    border: 1px solid var(--color-border);
+  }
+  .preview-mini-card {
+    margin-left: auto;
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* Section tabs */
+  .vs-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0 16px;
+    gap: 2px;
+  }
+  .vs-tab {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     font-size: 12px;
     font-weight: 500;
-    font-family: var(--font-mono);
-    color: var(--color-ink);
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    color: var(--color-ink-subtle);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
   }
-  .badge-info {
-    background: var(--color-info-bg);
-    color: var(--color-info);
-    border: 1px solid var(--color-info);
+  .vs-tab:hover { color: var(--color-ink); }
+  .vs-tab-active { color: var(--color-brand); border-bottom-color: var(--color-brand); }
+
+  .vs-body { padding: 16px; }
+  .vs-section { display: flex; flex-direction: column; gap: 8px; }
+  .vs-row-label { font-size: 12px; font-weight: 700; color: var(--color-ink); letter-spacing: 0.03em; }
+
+  /* Color swatches */
+  .color-swatches { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .swatch {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    flex-shrink: 0;
+  }
+  .swatch:hover { transform: scale(1.2); box-shadow: 0 0 0 3px rgba(255,255,255,0.2); }
+  .swatch-active { border-color: #fff; transform: scale(1.2); box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
+  .swatch-custom-wrap {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    border: 2px dashed var(--color-border);
+    cursor: pointer;
+    position: relative;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .swatch-custom-wrap:hover { border-color: var(--color-brand); }
+  .swatch-picker-icon { font-size: 11px; color: var(--color-ink-subtle); pointer-events: none; }
+  .color-picker-hidden {
+    position: absolute; inset: 0;
+    opacity: 0; width: 100%; height: 100%;
+    cursor: pointer;
+  }
+  .hex-preview-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  }
+  .hex-dot { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; }
+  .hex-input {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: var(--color-ink);
+    width: 90px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .hex-input:focus { border-color: var(--color-brand); }
+  .hex-label { font-size: 11px; color: var(--color-ink-ghost); }
+
+  /* Effects */
+  .effect-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .effect-card {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 4px; padding: 10px 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface-raised);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+  .effect-card:hover { border-color: var(--color-brand); transform: translateY(-1px); }
+  .effect-card-active { border-color: var(--color-brand); background: var(--color-brand-subtle); }
+  .effect-icon { font-size: 20px; }
+  .effect-name { font-size: 10px; font-weight: 700; color: var(--color-ink); text-align: center; }
+  .effect-desc { font-size: 9px; color: var(--color-ink-ghost); text-align: center; line-height: 1.3; }
+
+  /* Background */
+  .bg-type-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .bg-card {
+    display: flex; flex-direction: column;
+    padding: 10px; gap: 3px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface-raised);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .bg-card:hover { border-color: var(--color-brand); }
+  .bg-card-active { border-color: var(--color-brand); background: var(--color-brand-subtle); }
+  .bg-name { font-size: 11px; font-weight: 700; color: var(--color-ink); }
+  .bg-desc { font-size: 9px; color: var(--color-ink-ghost); line-height: 1.3; }
+
+  .dir-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 5px; margin-top: 4px;
+  }
+  .dir-btn {
+    padding: 6px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--color-border); border-radius: 6px;
+    background: var(--color-surface-raised); color: var(--color-ink);
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    text-align: center;
+  }
+  .dir-btn:hover { border-color: var(--color-brand); }
+  .dir-btn-active { border-color: var(--color-brand); background: var(--color-brand-subtle); color: var(--color-brand); font-weight: 700; }
+
+  /* Slider */
+  .slider-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .slider-label { font-size: 10px; color: var(--color-ink-ghost); min-width: 28px; }
+  .styled-range {
+    flex: 1; -webkit-appearance: none; appearance: none;
+    height: 4px; border-radius: 2px;
+    background: var(--color-border);
+    outline: none; cursor: pointer;
+  }
+  .styled-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--color-brand);
+    box-shadow: 0 0 0 2px var(--color-brand-subtle);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .styled-range::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+  /* Layout tab */
+  .font-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 5px; margin-top: 4px;
+  }
+  .font-card {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 4px; gap: 4px;
+    border: 1px solid var(--color-border); border-radius: 7px;
+    background: var(--color-surface-raised);
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+  }
+  .font-card:hover { border-color: var(--color-brand); }
+  .font-card-active { border-color: var(--color-brand); background: var(--color-brand-subtle); }
+  .font-preview { font-size: 18px; font-weight: 700; color: var(--color-ink); }
+  .font-name { font-size: 8px; color: var(--color-ink-ghost); text-align: center; }
+
+  .radius-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 6px; margin-top: 4px;
+  }
+  .radius-btn {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 10px 6px; gap: 6px;
+    border: 1px solid var(--color-border); border-radius: 8px;
+    background: var(--color-surface-raised);
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    font-size: 11px; color: var(--color-ink-subtle);
+  }
+  .radius-btn:hover { border-color: var(--color-brand); }
+  .radius-btn-active { border-color: var(--color-brand); background: var(--color-brand-subtle); color: var(--color-brand); font-weight: 600; }
+  .radius-preview { width: 32px; height: 18px; }
+
+  .shadow-grid, .anim-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 5px; margin-top: 4px;
+  }
+  .shadow-btn, .anim-btn {
+    padding: 7px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--color-border); border-radius: 6px;
+    background: var(--color-surface-raised); color: var(--color-ink);
+    cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    text-align: center;
+  }
+  .shadow-btn:hover, .anim-btn:hover { border-color: var(--color-brand); }
+  .shadow-btn-active, .anim-btn-active {
+    border-color: var(--color-brand);
+    background: var(--color-brand-subtle);
+    color: var(--color-brand);
+    font-weight: 700;
   }
 </style>

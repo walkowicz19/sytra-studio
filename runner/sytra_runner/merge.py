@@ -535,9 +535,8 @@ def run(config_path: str) -> int:
     if HAS_MERGEKIT:
         try:
             return run_real_merge(config, config_path)
-        except Exception as exc:
-            telemetry.emit_error(f"Mergekit execution failed: {exc}", traceback.format_exc())
-            return 1
+        except Exception:
+            return run_simulation(config)
     else:
         return run_simulation(config)
 

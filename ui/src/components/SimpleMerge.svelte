@@ -5,17 +5,73 @@
    * base model are chosen automatically. Compatibility is checked before
    * anything starts.
    */
-  import { run, resetRun, pushToast, watchTelemetry } from '../store.svelte'
+  import { onMount } from 'svelte'
+  import { run, resetRun, pushToast, watchTelemetry, hwStore } from '../store.svelte'
   import { t } from '../i18n.svelte'
   import { api } from '../api'
-  import type { CompatResult } from '../types'
+  import type { CompatResult, LocalModelItem } from '../types'
   import catalogData from '../../../crates/sytra-contracts/src/catalog.json'
 
   const catalogIds: string[] = (catalogData as { model_id: string }[]).map(m => m.model_id)
 
-  // ── Step 1: models ────────────────────────────────────────────────────
+  let localModels = $state<LocalModelItem[]>([])
   let models = $state<string[]>(['', ''])
 
+  onMount(async () => {
+    try {
+      localModels = await api.listLocalModels()
+    } catch {}
+  })
+
+  async function pickLocalModel(index: number) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const picked = await open({
+        directory: false,
+        multiple: false,
+        title: 'Select local model file or folder',
+        filters: [{ name: 'Model Files', extensions: ['gguf', 'safetensors', 'bin', 'pth'] }]
+      })
+      if (typeof picked === 'string' && picked) {
+        models[index] = picked
+      }
+    } catch {}
+  }
+
+  const vramMb = $derived(hwStore.info ? hwStore.info.vram_mb : 0)
+  const totalVramGb = $derived(vramMb / 1024)
+
+  // Combined size of all chosen local models
+  const totalSelectedGb = $derived(
+    models
+      .map(p => localModels.find(m => m.path === p || m.id === p || m.name === p))
+      .filter(Boolean)
+      .reduce((sum, m) => sum + (m?.size_gb ?? 0), 0)
+  )
+
+  // Whether the VRAM check blocks the merge (known models that collectively exceed 2× VRAM)
+  // MoE streaming handles up to 2× VRAM, beyond that we block.
+  const vramBlocked = $derived(
+    totalSelectedGb > 0 && vramMb > 0 && totalSelectedGb > totalVramGb * 2
+  )
+
+  function getModelVramStatus(modelPath: string): { label: string; status: 'ok' | 'streaming' | 'too-large' | 'unknown' } {
+    if (!modelPath) return { label: '', status: 'unknown' }
+    const match = localModels.find(m => m.path === modelPath || m.id === modelPath || m.name === modelPath)
+    if (match) {
+      const neededMb = match.size_gb * 1024
+      if (neededMb <= vramMb) {
+        return { label: `Fits VRAM (${match.size_gb} GB)`, status: 'ok' }
+      } else if (match.size_gb <= totalVramGb * 2) {
+        return { label: `Expert Streaming Ready (${match.size_gb} GB)`, status: 'streaming' }
+      } else {
+        return { label: `Too large for Expert Streaming (${match.size_gb} GB — needs ${(match.size_gb / 2).toFixed(1)} GB VRAM)`, status: 'too-large' }
+      }
+    }
+    return { label: 'External / HF Model', status: 'unknown' }
+  }
+
+  // ── Step 1: models ────────────────────────────────────────────────────
   function addModel() {
     if (models.length < 3) models = [...models, '']
   }
@@ -60,6 +116,13 @@
   async function start() {
     if (submitting || run.status === 'running' || !modelsReady) return
     submitting = true
+
+    // VRAM check: block if total local model size exceeds 2× available VRAM
+    if (vramBlocked) {
+      pushToast('error', `Cannot merge: combined model size (${totalSelectedGb.toFixed(1)} GB) exceeds Expert Streaming capacity (${(totalVramGb * 2).toFixed(1)} GB). Select smaller models or use HF model IDs instead.`)
+      submitting = false
+      return
+    }
 
     const verdict = await checkCompat()
     if (!verdict) { submitting = false; return }
@@ -120,25 +183,65 @@
 
         <div class="model-list">
           {#each models as _, i}
-            <div class="model-row">
-              <span class="model-index">{i + 1}</span>
-              <input
-                class="input input-mono"
-                placeholder={i === 0 ? 'e.g. mistralai/Mistral-7B-v0.1' : 'e.g. org/knowledge-ft'}
-                bind:value={models[i]}
-                list="catalog-models"
-              />
-              {#if models.length > 2}
-                <button class="btn btn-ghost btn-icon" onclick={() => removeModel(i)} aria-label="Remove model">
-                  <i class="bi bi-x-lg"></i>
+            {@const vStat = getModelVramStatus(models[i])}
+            <div class="model-row-group">
+              <div class="model-row">
+                <span class="model-index">{i + 1}</span>
+                <input
+                  class="input input-mono"
+                  placeholder={i === 0 ? 'e.g. mistralai/Mistral-7B-v0.1 or C:\\models\\model.gguf' : 'e.g. org/knowledge-ft'}
+                  bind:value={models[i]}
+                  list="catalog-models"
+                />
+
+                <button class="btn btn-secondary btn-sm" onclick={() => pickLocalModel(i)} title="Browse OS File Explorer for local model file or folder">
+                  <i class="bi bi-folder2-open"></i> Browse
                 </button>
-              {/if}
+
+                {#if models.length > 2}
+                  <button class="btn btn-ghost btn-icon" onclick={() => removeModel(i)} aria-label="Remove model">
+                    <i class="bi bi-x-lg"></i>
+                  </button>
+                {/if}
+              </div>
+
+              <!-- Local Model Select & VRAM compatibility status -->
+              <div class="model-meta-row">
+                {#if localModels.length > 0}
+                  <select class="select select-sm local-model-select" onchange={(e) => models[i] = (e.target as HTMLSelectElement).value}>
+                    <option value="">-- Choose from Scanned Local Models --</option>
+                    {#each localModels as lm}
+                      <option value={lm.path}>[{lm.category.toUpperCase()}] {lm.name} ({lm.size_gb} GB)</option>
+                    {/each}
+                  </select>
+                {/if}
+
+                {#if vStat.status === 'ok'}
+                  <span class="badge badge-green"><i class="bi bi-check-circle-fill"></i> {vStat.label}</span>
+                {:else if vStat.status === 'streaming'}
+                  <span class="badge badge-warning"><i class="bi bi-lightning-fill"></i> {vStat.label}</span>
+                {:else if vStat.status === 'too-large'}
+                  <span class="badge badge-red"><i class="bi bi-x-circle-fill"></i> {vStat.label}</span>
+                {/if}
+              </div>
             </div>
           {/each}
           <datalist id="catalog-models">
             {#each catalogIds as id}<option value={id}></option>{/each}
           </datalist>
         </div>
+
+        <!-- Global VRAM block warning -->
+        {#if vramBlocked}
+          <div class="vram-block-alert">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>
+              <strong>Cannot Merge — Models Too Large for This GPU</strong>
+              <p>Combined local model size <strong>{totalSelectedGb.toFixed(1)} GB</strong> exceeds Expert Streaming capacity of <strong>{(totalVramGb * 2).toFixed(1)} GB</strong> (2× your {totalVramGb.toFixed(1)} GB VRAM). Use smaller models or supply HF model IDs to download on-demand instead.</p>
+            </div>
+          </div>
+        {/if}
+
         {#if models.length < 3}
           <button class="btn btn-ghost btn-sm" onclick={addModel} style="align-self:flex-start">
             <i class="bi bi-plus-lg"></i> {t('combine.addThird')}
@@ -192,12 +295,14 @@
         <button
           class="btn btn-primary btn-lg start-btn"
           onclick={start}
-          disabled={submitting || checking || !modelsReady || run.status === 'running'}
+          disabled={submitting || checking || !modelsReady || run.status === 'running' || vramBlocked}
         >
           {#if submitting || checking}<span class="spinner"></span>{/if}
           {t('combine.start')}
         </button>
-        {#if run.status === 'running'}
+        {#if vramBlocked}
+          <span class="text-small" style="color: var(--color-error, #e05c5c)"><i class="bi bi-x-circle-fill"></i> Models too large for your GPU — merge blocked</span>
+        {:else if run.status === 'running'}
           <span class="text-small">{t('teach.runInProgress')}</span>
         {:else if !modelsReady}
           <span class="text-small">{t('combine.enterTwo')}</span>
@@ -248,7 +353,28 @@
   .step-sub { font-size: 15px; color: var(--color-ink-subtle); margin-top: 4px; }
 
   .model-list { display: flex; flex-direction: column; gap: var(--space-3); }
+  .model-row-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--color-surface-raised);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-card, 8px);
+  }
   .model-row { display: flex; align-items: center; gap: var(--space-4); }
+  .model-meta-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding-left: 28px;
+    flex-wrap: wrap;
+  }
+  .local-model-select {
+    flex: 1;
+    max-width: 360px;
+    font-size: 0.8rem;
+  }
   .model-row :global(.input) { height: 46px; font-size: 14px; padding: 0 var(--space-4); }
   .model-index {
     font-family: var(--font-display);
@@ -261,6 +387,29 @@
   }
 
   .choice-col { display: flex; flex-direction: column; gap: var(--space-3); }
+
+  .vram-block-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    background: color-mix(in srgb, #e05c5c 10%, transparent);
+    border: 1px solid color-mix(in srgb, #e05c5c 40%, transparent);
+    border-radius: var(--radius-card, 8px);
+    padding: var(--space-3) var(--space-4);
+    color: var(--color-text);
+    font-size: 0.85rem;
+  }
+  .vram-block-alert > i {
+    font-size: 1.1rem;
+    color: #e05c5c;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .vram-block-alert p {
+    margin: 4px 0 0 0;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+  }
   .choice {
     display: flex;
     align-items: center;

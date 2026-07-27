@@ -80,6 +80,7 @@ class RunConfig:
     train: dict[str, Any]
     algo: dict[str, Any]
     output: dict[str, Any]
+    downloader: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "RunConfig":
@@ -113,6 +114,7 @@ class RunConfig:
             train=raw.get("train") or {},
             algo=raw.get("algo") or {},
             output=raw.get("output") or {},
+            downloader=raw.get("downloader") or {},
         )
 
     @classmethod

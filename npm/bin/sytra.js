@@ -6,7 +6,7 @@ const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
 
-const VERSION = '1.0.0';
+const VERSION = '1.2.0';
 const REPO = 'walkowicz19/sytra-studio';
 
 const USAGE = `
@@ -125,12 +125,17 @@ async function installBinaries() {
     copyDirSync(packageScripts, scriptsDir);
   }
 
-  // 2. Download executables from Git raw files under tag 1.0.0
-  const baseUrl = `https://raw.githubusercontent.com/${REPO}/1.0.0/binaries/${platform}`;
-  
+  // 2. Download executables from Git raw files under tag v1.2.0 (with main fallback)
+  const baseUrl = `https://raw.githubusercontent.com/${REPO}/v1.2.0/binaries/${platform}`;
+  const fallbackUrl = `https://raw.githubusercontent.com/${REPO}/main/binaries/${platform}`;
+
   console.log(`Downloading Sytra Studio Desktop (${platform})...`);
   try {
-    await downloadFile(`${baseUrl}/${exeName}`, studioPath);
+    try {
+      await downloadFile(`${baseUrl}/${exeName}`, studioPath);
+    } catch {
+      await downloadFile(`${fallbackUrl}/${exeName}`, studioPath);
+    }
     // Mark as executable on macOS/Linux
     if (platform !== 'windows') {
       fs.chmodSync(studioPath, 0o755);
@@ -143,7 +148,11 @@ async function installBinaries() {
 
   console.log(`Downloading Sytra MCP Server (${platform})...`);
   try {
-    await downloadFile(`${baseUrl}/${mcpExeName}`, mcpPath);
+    try {
+      await downloadFile(`${baseUrl}/${mcpExeName}`, mcpPath);
+    } catch {
+      await downloadFile(`${fallbackUrl}/${mcpExeName}`, mcpPath);
+    }
     // Mark as executable on macOS/Linux
     if (platform !== 'windows') {
       fs.chmodSync(mcpPath, 0o755);

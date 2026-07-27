@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Where Hugging Face models/datasets are cached (HF_HOME). None =
     /// `<workspace>/.hf-cache`. Users with a small system SSD point this
@@ -17,6 +17,71 @@ pub struct AppSettings {
     /// all detected system memory.
     #[serde(default)]
     pub main_memory_limit_mb: Option<u64>,
+    /// Whether to bypass HF token requirement for open models.
+    #[serde(default = "default_true")]
+    pub tokenless_download: bool,
+    /// Quantization bit precision target (1, 2, 4 bits).
+    #[serde(default)]
+    pub low_bit_mode: Option<u8>,
+    /// VRAM allocated for MoE expert caching (in MB).
+    #[serde(default)]
+    pub vram_expert_cache_mb: Option<u64>,
+    /// Default context window for inference & GGUF export (tokens). Default: 4096.
+    #[serde(default = "default_context_window")]
+    pub default_context_window: usize,
+    /// Default sampling temperature for inference. Default: 0.7.
+    #[serde(default = "default_temperature")]
+    pub default_temperature: f32,
+    /// Whether to enable Flash Attention in local inference servers. Default: true.
+    #[serde(default = "default_true")]
+    pub enable_flash_attention: bool,
+    /// KV Cache Quantization target ("fp16", "q8_0", "q4_0"). Default: "q8_0".
+    #[serde(default = "default_kv_quant")]
+    pub kv_cache_quant: String,
+    /// Hard VRAM ceiling budget for model weights (in MB). Default: Some(8192) MB (8 GB).
+    #[serde(default = "default_vram_limit")]
+    pub vram_limit_mb: Option<u64>,
+    /// Whether to offload 100% of KV Cache to CPU System RAM to prevent GPU VRAM overflow. Default: false.
+    #[serde(default)]
+    pub cpu_kv_cache: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_context_window() -> usize {
+    4096
+}
+
+fn default_temperature() -> f32 {
+    0.7
+}
+
+fn default_kv_quant() -> String {
+    "q8_0".to_string()
+}
+
+fn default_vram_limit() -> Option<u64> {
+    Some(8192)
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            hf_cache_dir: None,
+            main_memory_limit_mb: None,
+            tokenless_download: true,
+            low_bit_mode: Some(4),
+            vram_expert_cache_mb: Some(4096),
+            default_context_window: 4096,
+            default_temperature: 0.7,
+            enable_flash_attention: true,
+            kv_cache_quant: "q8_0".to_string(),
+            vram_limit_mb: Some(8192),
+            cpu_kv_cache: false,
+        }
+    }
 }
 
 impl AppSettings {
@@ -74,6 +139,7 @@ mod tests {
         let s = AppSettings {
             hf_cache_dir: Some(custom.clone()),
             main_memory_limit_mb: Some(8192),
+            ..Default::default()
         };
         s.save(&ws).unwrap();
         let loaded = AppSettings::load(&ws);
@@ -88,6 +154,7 @@ mod tests {
         let s = AppSettings {
             hf_cache_dir: None,
             main_memory_limit_mb: Some(999_999),
+            ..Default::default()
         };
         assert_eq!(s.effective_main_memory_mb(32768), 32768);
     }

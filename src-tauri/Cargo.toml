@@ -32,6 +32,7 @@ sytra-host       = { path = "../crates/sytra-host" }
 sytra-contracts  = { path = "../crates/sytra-contracts" }
 
 [features]
+default = ["custom-protocol"]
 # This feature is used for production builds where frontend assets are bundled.
 custom-protocol = ["tauri/custom-protocol"]
 

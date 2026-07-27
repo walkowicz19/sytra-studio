@@ -94,6 +94,11 @@ impl JobRunner {
             .env("PYTHONIOENCODING", "utf-8")
             // Never let HF Hub wait on interactive auth.
             .env("HF_HUB_DISABLE_TELEMETRY", "1")
+            .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            .env(
+                "SYTRA_TOKENLESS",
+                if crate::settings::AppSettings::load(&self.workspace_root).tokenless_download { "1" } else { "0" },
+            )
             // Multi-GB model downloads go where the user chose (default:
             // workspace .hf-cache) instead of filling the C: SSD. Loaded
             // fresh per spawn so a settings change applies immediately.

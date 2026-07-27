@@ -17,6 +17,30 @@ export interface HfParams {
   jsonl_path?: string
 }
 
+export interface ModelDownloadStatus {
+  repo_id: string
+  status: string
+  downloaded_gb: number
+  total_gb: number
+  pct: number
+  speed_mbps: number
+  eta_seconds: number
+  eta_formatted: string
+  current_file: string
+  shard_index: number
+  total_shards: number
+  timestamp: number
+}
+
+export interface LocalModelItem {
+  id: string
+  name: string
+  category: 'downloaded' | 'finetuned' | 'merged'
+  path: string
+  size_gb: number
+  format: string
+}
+
 export interface AdapterConfig {
   kind:           AdapterType
   rank:           number
@@ -122,3 +146,27 @@ export interface CompatResult {
 
 /** Live telemetry chart data point */
 export interface DataPoint { step: number; value: number }
+
+/** Model catalog entry for the Model Hub download page */
+export interface CatalogEntry {
+  id:          string   // HuggingFace repo ID
+  name:        string   // Human-readable name
+  size_gb:     number   // Approximate size in GB
+  format:      'gguf' | 'safetensors'
+  tags:        string[]
+  recommended: boolean  // Recommended for this user's hardware
+}
+
+export interface AppSettings {
+  hf_cache_dir: string | null
+  main_memory_limit_mb: number | null
+  tokenless_download: boolean
+  low_bit_mode: number | null
+  vram_expert_cache_mb: number | null
+  default_context_window: number
+  default_temperature: number
+  enable_flash_attention: boolean
+  kv_cache_quant: string
+  vram_limit_mb?: number | null
+  cpu_kv_cache?: boolean
+}

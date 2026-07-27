@@ -49,6 +49,7 @@ const en: Dict = {
   'nav.merge': 'Merge',
   'nav.runs': 'Runs',
   'nav.guider': 'Guider',
+  'nav.models': 'Models',
   'sidebar.advancedMode': 'Advanced mode',
   'sidebar.allSettings': 'All settings visible',
   'sidebar.guided': 'Guided & simple',

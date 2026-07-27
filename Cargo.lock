@@ -4238,7 +4238,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-contracts"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -4250,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-host"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-mcp"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -4281,7 +4281,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-studio"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "mime_guess",

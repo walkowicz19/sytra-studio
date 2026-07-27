@@ -569,11 +569,104 @@ impl Server {
             "steps": steps,
             "gotchas": [
                 "NEVER `ollama create` directly from a safetensors directory — use the llama.cpp converter first.",
+                "Novel MoE architectures like Kimi 2.7 Coder (kimi_k25 with 384 experts) are not natively supported by Ollama's internal GGUF importer — use LM Studio or Sytra Studio's GPU Expert Pager instead.",
                 "Train runs produce an adapter; merge it into the base model before converting.",
                 "The Modelfile must carry the model's chat TEMPLATE and stop tokens or output will be unusable.",
                 "`ollama run` hangs when spawned without a terminal (TTY detection). To smoke-test programmatically, POST to http://127.0.0.1:11434/api/generate with {\"model\": ..., \"prompt\": ..., \"stream\": false} instead.",
                 "First response after import is slow: the model loads from disk (~1-2 min for 8 GB on an HDD).",
             ],
+        }))
+    }
+
+    fn tool_configure_fast_cache(&self, args: &Value) -> Result<Value, String> {
+        let tokenless = args.get("tokenless").and_then(|v| v.as_bool()).unwrap_or(true);
+        let low_bit_mode = args.get("low_bit_mode").and_then(|v| v.as_u64()).map(|v| v as u8);
+        let vram_expert_cache_mb = args.get("vram_expert_cache_mb").and_then(|v| v.as_u64());
+
+        let mut settings = sytra_host::settings::AppSettings::load(&self.workspace);
+        settings.tokenless_download = tokenless;
+        if low_bit_mode.is_some() {
+            settings.low_bit_mode = low_bit_mode;
+        }
+        if vram_expert_cache_mb.is_some() {
+            settings.vram_expert_cache_mb = vram_expert_cache_mb;
+        }
+        settings.save(&self.workspace).map_err(|e| e.to_string())?;
+
+        Ok(json!({
+            "tokenless_download": settings.tokenless_download,
+            "low_bit_mode": settings.low_bit_mode,
+            "vram_expert_cache_mb": settings.vram_expert_cache_mb,
+            "message": "Fast tokenless cache and GPU low-bit settings updated."
+        }))
+    }
+
+    fn tool_download_model(&self, args: &Value) -> Result<Value, String> {
+        let model = args.get("model")
+            .and_then(|v| v.as_str())
+            .ok_or("missing 'model' parameter")?;
+        let dest_dir = args.get("dest_dir")
+            .and_then(|v| v.as_str());
+        let purpose = args.get("purpose")
+            .and_then(|v| v.as_str())
+            .unwrap_or("inference");
+        let export_target = if purpose == "inference" { "LM Studio & Ollama" } else { "Sytra Workspace" };
+        let home_path = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(PathBuf::from);
+        let default_target = home_path
+            .map(|h| h.join("lm-studio models"))
+            .unwrap_or_else(|| PathBuf::from("./lm-studio models"));
+        let target_path = dest_dir.map(PathBuf::from).unwrap_or(default_target);
+        let status_file = target_path.join(".download_status.json");
+
+        // If download_status.json exists and belongs to this repo, return status summary
+        if status_file.exists() {
+            if let Ok(content) = std::fs::read_to_string(&status_file) {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
+                    if parsed.get("repo_id").and_then(|v| v.as_str()) == Some(model) {
+                        return Ok(json!({
+                            "model": model,
+                            "dest_dir": target_path.to_string_lossy(),
+                            "purpose": purpose,
+                            "export_target": export_target,
+                            "format": if purpose == "inference" { "GGUF" } else { "safetensors" },
+                            "download_status": parsed,
+                            "message": format!(
+                                "Model download status for {model}: {}% completed ({}/{} GB), speed: {} MB/s, ETA: {}, shard: {}/{}",
+                                parsed.get("pct").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                parsed.get("downloaded_gb").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                parsed.get("total_gb").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                parsed.get("speed_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                                parsed.get("eta_formatted").and_then(|v| v.as_str()).unwrap_or("calculating..."),
+                                parsed.get("shard_index").and_then(|v| v.as_u64()).unwrap_or(1),
+                                parsed.get("total_shards").and_then(|v| v.as_u64()).unwrap_or(1),
+                            )
+                        }));
+                    }
+                }
+            }
+        }
+
+        let py_script = self.workspace.join("runner").join("scripts").join("download_gguf_model.py");
+        let mut cmd = std::process::Command::new("python");
+        cmd.arg(&py_script).arg("--model").arg(model);
+        if let Some(dest) = dest_dir {
+            if !dest.trim().is_empty() {
+                cmd.arg("--dest").arg(dest);
+            }
+        }
+        cmd.current_dir(&self.workspace);
+
+        let status = cmd.status()
+            .map_err(|e| format!("Failed to launch download script: {e}"))?;
+
+        Ok(json!({
+            "model": model,
+            "dest_dir": target_path.to_string_lossy(),
+            "purpose": purpose,
+            "export_target": export_target,
+            "format": if purpose == "inference" { "GGUF" } else { "safetensors" },
+            "status": if status.success() { "completed" } else { "error" },
+            "message": format!("Sytra Studio launched downloading {model} into {}.", target_path.display())
         }))
     }
 
@@ -583,6 +676,8 @@ impl Server {
             "get_settings" => self.tool_get_settings(),
             "set_cache_dir" => self.tool_set_cache_dir(args),
             "set_main_memory_limit" => self.tool_set_main_memory_limit(args),
+            "configure_fast_cache" => self.tool_configure_fast_cache(args),
+            "download_model" => self.tool_download_model(args),
             "list_catalog" => self.tool_list_catalog(),
             "guider_recommend" => self.tool_guider_recommend(args),
             "merge_check" => self.tool_merge_check(args),
@@ -654,6 +749,32 @@ fn tool_definitions() -> Value {
                 "properties": {
                     "limit_mb": { "type": ["integer", "null"], "minimum": 2048, "description": "RAM ceiling in MB, or null for automatic" }
                 },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "configure_fast_cache",
+            "description": "Configure zero-token fast HF downloading, zero-RAM mmap loading, low-bit precision (1, 2, 4 bits), and GPU VRAM expert caching.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tokenless": { "type": "boolean", "description": "Bypass HF token prompts for open weights models" },
+                    "low_bit_mode": { "type": ["integer", "null"], "description": "Quantization bit mode (1, 2, 4 bits)" },
+                    "vram_expert_cache_mb": { "type": ["integer", "null"], "description": "Allocated VRAM limit in MB for GPU expert caching" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "download_model",
+            "description": "Autonomously fetch, cache, and export open models (e.g. Kimi 2.7 Coder) for Ollama / LM Studio directly inside Sytra.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "model": { "type": "string", "description": "Hugging Face model repository ID (e.g. moonshotai/Kimi-K2.7-Code)" },
+                    "export_target": { "type": "string", "description": "Downstream target: ollama | lm-studio | both (default: ollama)" }
+                },
+                "required": ["model"],
                 "additionalProperties": false
             }
         },

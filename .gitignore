@@ -18,7 +18,12 @@
 *.pdb
 *.dll
 *.exe
+!binaries/**/*.exe
 *.log
 .DS_Store
+.test-dl/
+.test-download/
+calls.json
+runner/.hf-cache/
 /npm/runner/
 /npm/scripts/

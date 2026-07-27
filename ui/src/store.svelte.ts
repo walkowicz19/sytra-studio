@@ -3,9 +3,136 @@ import type { OpRecord, TelemetryLine, DataPoint, TrainMode, AdapterType, Schedu
 // ─── Theme ───────────────────────────────────────────────────────────────────
 export const themeStore = $state({ dark: false })
 
+export interface CustomTheme {
+  accentColor: string
+  bgType: 'default' | 'solid' | 'gradient' | 'mesh' | 'aurora' | 'image' | 'gif'
+  bgUrl: string
+  bgOpacity: number
+  effect: 'none' | 'glassmorphism' | 'glow' | 'scanlines' | 'cyberpunk' | 'frosted' | 'matrix' | 'holographic'
+  glassBlur: number
+  glowIntensity: number
+  gradientDir: 'top' | 'top-right' | 'right' | 'bottom-right' | 'bottom' | 'radial'
+  gradientSecond: string
+  fontFamily: 'system' | 'inter' | 'jetbrains' | 'outfit' | 'geist'
+  animSpeed: 'off' | 'slow' | 'normal' | 'fast'
+  borderRadius: 'sharp' | 'default' | 'rounded'
+  sidebarBlur: boolean
+  cardShadow: 'none' | 'subtle' | 'elevated' | 'neon'
+}
+
+const defaultCustomTheme: CustomTheme = {
+  accentColor: '#e03535',
+  bgType: 'default',
+  bgUrl: '',
+  bgOpacity: 0.15,
+  effect: 'none',
+  glassBlur: 16,
+  glowIntensity: 60,
+  gradientDir: 'radial',
+  gradientSecond: '#1e1b4b',
+  fontFamily: 'system',
+  animSpeed: 'normal',
+  borderRadius: 'default',
+  sidebarBlur: false,
+  cardShadow: 'subtle',
+}
+
+function loadSavedCustomTheme(): CustomTheme {
+  try {
+    const raw = localStorage.getItem('sytra-custom-theme')
+    if (raw) return { ...defaultCustomTheme, ...JSON.parse(raw) }
+  } catch {}
+  return defaultCustomTheme
+}
+
+export const customThemeStore = $state<CustomTheme>(loadSavedCustomTheme())
+
+export function applyCustomTheme() {
+  const root = document.documentElement
+  const hex = customThemeStore.accentColor || '#e03535'
+  root.style.setProperty('--color-brand', hex)
+  root.style.setProperty('--color-brand-hover', hex)
+  root.style.setProperty('--color-brand-light', hexToRgba(hex, 0.15))
+  root.style.setProperty('--color-brand-subtle', hexToRgba(hex, 0.08))
+
+  // Background
+  if (customThemeStore.bgType === 'image' || customThemeStore.bgType === 'gif') {
+    root.style.setProperty('--custom-bg-image', customThemeStore.bgUrl ? `url("${customThemeStore.bgUrl}")` : 'none')
+  } else if (customThemeStore.bgType === 'gradient') {
+    const dir = customThemeStore.gradientDir === 'radial'
+      ? `radial-gradient(ellipse at 50% 0%, ${hexToRgba(hex, 0.30)}, ${customThemeStore.gradientSecond} 60%, transparent 100%)`
+      : `linear-gradient(to ${customThemeStore.gradientDir}, ${hexToRgba(hex, 0.28)}, ${customThemeStore.gradientSecond})`
+    root.style.setProperty('--custom-bg-image', dir)
+  } else if (customThemeStore.bgType === 'mesh') {
+    root.style.setProperty('--custom-bg-image',
+      `radial-gradient(at 40% 20%, ${hexToRgba(hex, 0.35)} 0%, transparent 50%),` +
+      `radial-gradient(at 80% 0%, ${hexToRgba(customThemeStore.gradientSecond, 0.3)} 0%, transparent 50%),` +
+      `radial-gradient(at 0% 50%, ${hexToRgba(hex, 0.15)} 0%, transparent 50%)`)
+  } else if (customThemeStore.bgType === 'aurora') {
+    root.style.setProperty('--custom-bg-image',
+      `linear-gradient(125deg, ${hexToRgba(hex, 0.25)} 0%, ${hexToRgba(customThemeStore.gradientSecond, 0.2)} 40%, ${hexToRgba('#06b6d4', 0.15)} 80%)`)
+  } else {
+    root.style.setProperty('--custom-bg-image', 'none')
+  }
+  root.style.setProperty('--custom-bg-opacity', customThemeStore.bgOpacity.toString())
+
+  // Glass / glow
+  root.style.setProperty('--glass-blur', `${customThemeStore.glassBlur ?? 16}px`)
+  const glow = (customThemeStore.glowIntensity ?? 60) / 100
+  root.style.setProperty('--glow-strength', `${Math.round(glow * 24)}px`)
+  root.style.setProperty('--glow-color', hexToRgba(hex, glow * 0.8))
+
+  // Border radius
+  const radii: Record<string, string> = { sharp: '2px', default: '6px', rounded: '12px' }
+  root.style.setProperty('--radius-card', radii[customThemeStore.borderRadius ?? 'default'] ?? '6px')
+
+  // Font family
+  const fonts: Record<string, string> = {
+    system: 'system-ui, sans-serif',
+    inter: '"Inter", system-ui, sans-serif',
+    jetbrains: '"JetBrains Mono", monospace',
+    outfit: '"Outfit", system-ui, sans-serif',
+    geist: '"Geist", system-ui, sans-serif',
+  }
+  root.style.setProperty('--font-ui', fonts[customThemeStore.fontFamily ?? 'system'] ?? 'system-ui, sans-serif')
+
+  // Anim speed
+  const speeds: Record<string, string> = { off: '0s', slow: '0.5s', normal: '0.2s', fast: '0.08s' }
+  root.style.setProperty('--anim-duration', speeds[customThemeStore.animSpeed ?? 'normal'] ?? '0.2s')
+
+  // Card shadow
+  const shadows: Record<string, string> = {
+    none: 'none',
+    subtle: '0 1px 4px rgba(0,0,0,0.18)',
+    elevated: '0 4px 24px rgba(0,0,0,0.35)',
+    neon: `0 0 12px ${hexToRgba(hex, 0.4)}, 0 0 24px ${hexToRgba(hex, 0.2)}`,
+  }
+  root.style.setProperty('--card-shadow', shadows[customThemeStore.cardShadow ?? 'subtle'] ?? shadows.subtle)
+
+  // Sidebar blur
+  root.style.setProperty('--sidebar-blur', customThemeStore.sidebarBlur ? `blur(${customThemeStore.glassBlur ?? 16}px)` : 'none')
+
+  root.dataset.effect = customThemeStore.effect
+  localStorage.setItem('sytra-custom-theme', JSON.stringify(customThemeStore))
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  try {
+    let clean = hex.replace('#', '')
+    if (clean.length === 3) clean = clean.split('').map(c => c + c).join('')
+    let num = parseInt(clean, 16)
+    let r = (num >> 16) & 255
+    let g = (num >> 8) & 255
+    let b = num & 255
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`
+  } catch {
+    return `rgba(224, 53, 53, ${alpha})`
+  }
+}
+
 export function toggleTheme() {
   themeStore.dark = !themeStore.dark
-  document.documentElement.dataset.theme = themeStore.dark ? 'dark' : ''
+  document.documentElement.dataset.theme = themeStore.dark ? 'dark' : 'light'
   localStorage.setItem('sytra-theme', themeStore.dark ? 'dark' : 'light')
 }
 
@@ -14,12 +141,13 @@ export function initTheme() {
   const saved = localStorage.getItem('sytra-theme')
   const dark = saved !== 'light'
   themeStore.dark = dark
-  document.documentElement.dataset.theme = dark ? 'dark' : ''
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+  applyCustomTheme()
 }
 
 // ─── Active tab ───────────────────────────────────────────────────────────────
-export type Tab = 'train' | 'merge' | 'runs' | 'guider' | 'help' | 'settings'
-export const tabStore = $state({ active: 'train' as Tab })
+export type Tab = 'models' | 'train' | 'merge' | 'runs' | 'guider' | 'help' | 'settings'
+export const tabStore = $state({ active: 'models' as Tab })
 export function setTab(t: Tab) { tabStore.active = t }
 
 // ─── UI mode ──────────────────────────────────────────────────────────────────

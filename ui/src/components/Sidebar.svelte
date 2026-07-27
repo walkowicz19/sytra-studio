@@ -4,6 +4,7 @@
   import { t } from '../i18n.svelte'
 
   const simpleTabs: { id: Tab; key: string; iconClass: string }[] = [
+    { id: 'models', key: 'nav.models',  iconClass: 'bi-cloud-arrow-down' },
     { id: 'train',  key: 'nav.teach',   iconClass: 'bi-fire' },
     { id: 'merge',  key: 'nav.combine', iconClass: 'bi-lightning-charge' },
     { id: 'runs',   key: 'nav.history', iconClass: 'bi-clock-history' },
@@ -11,6 +12,7 @@
     { id: 'help',   key: 'nav.help',    iconClass: 'bi-question-circle' },
   ]
   const advancedTabs: { id: Tab; key: string; iconClass: string }[] = [
+    { id: 'models', key: 'nav.models', iconClass: 'bi-cloud-arrow-down' },
     { id: 'train',  key: 'nav.train',  iconClass: 'bi-fire' },
     { id: 'merge',  key: 'nav.merge',  iconClass: 'bi-lightning-charge' },
     { id: 'runs',   key: 'nav.runs',   iconClass: 'bi-clock-history' },
@@ -92,7 +94,7 @@
     >
       <i class="bi {themeStore.dark ? 'bi-sun-fill' : 'bi-moon-fill'}"></i>
     </button>
-    <span class="version">v1.0.0</span>
+    <span class="version">v1.2.0</span>
   </div>
 </aside>
 
@@ -100,6 +102,8 @@
   .sidebar {
     width: var(--sidebar-width);
     background: var(--color-surface);
+    backdrop-filter: var(--sidebar-blur, none);
+    -webkit-backdrop-filter: var(--sidebar-blur, none);
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;

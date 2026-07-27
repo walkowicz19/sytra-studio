@@ -1,4 +1,4 @@
-# Sytra Studio 1.0.0
+# Sytra Studio 1.1.0
 
 Sytra Studio is a local, hardware-aware desktop application and MCP server for fine-tuning and merging language models. Both the Svelte/Tauri UI and the `sytra-mcp` server share the same Rust backend host, validation rules, run archives, resource guards, and Python runners.
 

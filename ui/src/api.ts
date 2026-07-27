@@ -4,7 +4,8 @@
  */
 import type {
   RunConfig, MergeConfig, OpRecord, GuiderRecipe,
-  CompatResult, MergeMethod, HfParams,
+  CompatResult, MergeMethod, HfParams, CatalogEntry,
+  ModelDownloadStatus, LocalModelItem,
 } from './types'
 
 export interface AppSettings {
@@ -13,6 +14,12 @@ export interface AppSettings {
   main_memory_limit_mb: number | null
   effective_main_memory_mb: number
   detected_ram_mb: number
+  default_context_window?: number
+  default_temperature?: number
+  enable_flash_attention?: boolean
+  kv_cache_quant?: string
+  vram_limit_mb?: number | null
+  cpu_kv_cache?: boolean
 }
 
 // Detect if we are inside the Tauri runtime
@@ -67,6 +74,27 @@ export const api = {
 
   publishRun: (runOpId: string, repoId: string, isPrivate: boolean, token: string) =>
     invoke<string>('publish_run', { runOpId, repoId, private: isPrivate, token }),
+
+  downloadModel: (repoId: string, purpose: 'inference' | 'finetune' | 'merge', destDir?: string, quant?: string) =>
+    invoke<{ op_id: string }>('download_model', { repoId, purpose, destDir: destDir ?? null, quant: quant ?? null }),
+
+  cancelDownload: (destDir?: string) =>
+    invoke<boolean>('cancel_download', { destDir: destDir ?? null }),
+
+  listCatalog: () =>
+    invoke<CatalogEntry[]>('list_catalog'),
+
+  convertModel: (model: string, outtype?: string, outfile?: string) =>
+    invoke<string>('convert_model', { model, outtype: outtype ?? 'auto', outfile: outfile ?? null }),
+
+  exportModel: (model: string, name?: string, context?: number) =>
+    invoke<string>('export_model', { model, name: name ?? null, context: context ?? 4096 }),
+
+  getDownloadStatus: (destDir?: string) =>
+    invoke<ModelDownloadStatus | null>('get_download_status', { destDir: destDir ?? null }),
+
+  listLocalModels: (customDir?: string) =>
+    invoke<LocalModelItem[]>('list_local_models', { customDir: customDir ?? null }),
 }
 
 // ─── Mock ─────────────────────────────────────────────────────────────────────
@@ -119,6 +147,23 @@ function mockInvoke<T>(cmd: string, _args?: unknown): Promise<T> {
       ['Summarise this text.', 'Summary here.'],
     ],
     publish_run: 'mock-publish-' + Math.random().toString(36).slice(2),
+    download_model: { op_id: 'mock-dl-' + Math.random().toString(36).slice(2) },
+    list_catalog: [
+      { id: 'ggml-org/Kimi-VL-A3B-Thinking-2506-GGUF', name: 'Kimi VL A3B Thinking', size_gb: 9.81, format: 'gguf', tags: ['vision', 'coding', 'thinking'], recommended: true },
+      { id: 'unsloth/Kimi-K2.7-Code-GGUF', name: 'Kimi K2.7 Coder (MoE)', size_gb: 295, format: 'gguf', tags: ['coding', 'moe', 'large'], recommended: false },
+      { id: 'THUDM/glm-5.2-9b-chat', name: 'GLM-5.2 9B Chat', size_gb: 18, format: 'gguf', tags: ['chat', 'multilingual'], recommended: false },
+      { id: 'THUDM/GLM-5.2-744B-MoE-GGUF', name: 'GLM-5.2 744B MoE', size_gb: 370, format: 'gguf', tags: ['moe', 'frontier', 'large'], recommended: false },
+      { id: 'deepseek-ai/DeepSeek-V3-GGUF', name: 'DeepSeek V3 671B MoE', size_gb: 330, format: 'gguf', tags: ['moe', 'coding', 'large'], recommended: false },
+      { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B-GGUF', name: 'DeepSeek R1 Distill Qwen 14B', size_gb: 9.0, format: 'gguf', tags: ['reasoning', 'quant', 'fast'], recommended: true },
+      { id: 'Qwen/Qwen2.5-Coder-7B-Instruct-GGUF', name: 'Qwen2.5 Coder 7B Instruct', size_gb: 4.7, format: 'gguf', tags: ['coding', 'instruct', 'fast'], recommended: true },
+      { id: 'Qwen/Qwen2.5-3B-Instruct-GGUF', name: 'Qwen2.5 3B Instruct', size_gb: 2.1, format: 'gguf', tags: ['small', 'fast', 'lightweight'], recommended: true },
+      { id: 'microsoft/phi-4-gguf', name: 'Phi-4 14B Instruct', size_gb: 9.1, format: 'gguf', tags: ['reasoning', 'small', 'math'], recommended: true },
+      { id: 'google/gemma-2-9b-it-GGUF', name: 'Gemma-2 9B IT', size_gb: 5.8, format: 'gguf', tags: ['chat', 'general'], recommended: true },
+      { id: 'mistralai/Mixtral-8x22B-Instruct-v0.1-GGUF', name: 'Mixtral 8x22B Instruct', size_gb: 141, format: 'gguf', tags: ['moe', 'multilingual'], recommended: false },
+      { id: 'unsloth/mistral-7b-v0.3-bnb-4bit', name: 'Mistral 7B v0.3 (4-bit)', size_gb: 4.1, format: 'safetensors', tags: ['finetune', '4-bit', 'unsloth'], recommended: true },
+      { id: 'meta-llama/Llama-3.3-70B-Instruct-GGUF', name: 'Llama 3.3 70B Instruct (Q4)', size_gb: 42.5, format: 'gguf', tags: ['quant', 'frontier'], recommended: false },
+      { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF', name: 'SmolLM2 1.7B Instruct', size_gb: 1.1, format: 'gguf', tags: ['small', 'edge', 'fast'], recommended: true },
+    ],
   }
   return Promise.resolve((mocks[cmd] ?? null) as T)
 }
