@@ -1,6 +1,6 @@
-# Sytra Studio 1.1.0
+# Sytra Studio 1.2.0
 
-Sytra Studio is a local, hardware-aware desktop application and MCP server for fine-tuning and merging language models. Both the Svelte/Tauri UI and the `sytra-mcp` server share the same Rust backend host, validation rules, run archives, resource guards, and Python runners.
+Sytra Studio is a local, hardware-aware desktop application and MCP server for fine-tuning, model merging, and model management. Both the Svelte/Tauri UI and the `sytra-mcp` server share the same Rust backend host, validation rules, run archives, resource guards, and Python runners.
 
 ---
 
@@ -10,6 +10,7 @@ This section covers Sytra Studio features, requirements, quick installation, and
 
 ## Features
 
+- **Model Hub & Importer**: Scan local GGUF models, download GGUF models directly from Hugging Face repositories, and convert local SafeTensors/PyTorch weights to GGUF.
 - **Fine-tuning**: Supports SFT, DPO, ORPO, and CPO using LoRA, QLoRA, or DoRA.
 - **Model Merging**: Multi-model blending using SLERP, Linear, TIES, DARE-TIES, Task Arithmetic, Passthrough, and Mixture of Experts (MoE) workflows.
 - **Flexible Data Sources**: Load datasets from Hugging Face, local JSONL/CSV/Parquet files, synthetic generation, or multi-dataset mixes.
@@ -31,22 +32,31 @@ This section covers Sytra Studio features, requirements, quick installation, and
 > **Hardware Guidance & Model Sizes:**
 > It is **highly recommended to always check the size of the models** before initiating any merge or fine-tuning operations. Attempting to load, fine-tune, or merge models that exceed your system's hardware limits (available VRAM on GPU, or system RAM on CPU) can result in system instability, performance throttling, out-of-memory (OOM) crashes, or temporary freezing of your operating system.
 
-## One-Command Installation (NPM CLI)
+## One-Command Launch (NPM / NPX CLI)
 
-The easiest way to install and launch Sytra is globally via NPM:
+The easiest way to launch Sytra Studio without manual compilation is using `npx`:
 
 ```bash
-# Install Sytra globally
-npm install -g sytra-studio
+# Instant launch Sytra Studio Desktop application
+npx sytra-studio@latest
 
-# Launch the Sytra Studio Desktop application
-sytra
+# Launch Sytra MCP server (for Claude Code, Cursor, Codex, etc.)
+npx sytra-studio@latest mcp
 
-# Launch the Sytra MCP server
-sytra mcp
+# Force update / re-download binaries
+npx sytra-studio@latest install
 ```
 
-This CLI installer automatically handles downloading the correct pre-compiled binaries for your operating system (Windows, macOS, or Linux) and deploys all required Python runner scripts to your user home under `~/.sytra/`.
+Alternatively, install globally via `npm`:
+
+```bash
+npm install -g sytra-studio
+
+sytra          # Launch Sytra Studio Desktop
+sytra mcp      # Launch Sytra MCP Server
+```
+
+This CLI installer automatically handles downloading pre-compiled release binaries for your operating system (Windows, macOS, or Linux) and deploys all required Python runner scripts to your user home under `~/.sytra/`.
 
 ## Install from GitHub Releases
 
@@ -62,13 +72,19 @@ This CLI installer automatically handles downloading the correct pre-compiled bi
 
 ## Typical Workflows
 
-### 1. Fine-Tuning a Model
+### 1. Model Hub & Direct GGUF Download
+1. Open the **Models** tab.
+2. Click **Download GGUF Model** to pull models directly from Hugging Face (e.g. `Qwen/Qwen2.5-7B-Instruct-GGUF`).
+3. Click **Scan Custom Folder** to import models stored in external directories.
+4. Convert PyTorch/SafeTensors models to GGUF format for export to Ollama or LM Studio.
+
+### 2. Fine-Tuning a Model
 1. Go to the **Train** tab and choose a catalog model or follow hardware recommendations.
 2. Select and preview your dataset (Hugging Face or local files).
 3. Select your training parameters, adapter types (LoRA/QLoRA), and backend.
 4. Click **Start** and monitor the training loss and validation live.
 
-### 2. Merging Models
+### 3. Merging Models
 1. Go to the **Merge** tab and verify the compatibility of your selected models.
 2. Choose a merge method (e.g. SLERP for divergent models, TIES or DARE-TIES for related fine-tunes).
 3. Start the process. Sytra runs the merge on CPU/GPU and logs progress directly to your runs history.
