@@ -75,13 +75,18 @@ jobs:
       - name: Build Sytra Studio UI
         run: cargo build -p sytra-studio --release --features custom-protocol
 
+      - name: Stage Binaries
+        shell: bash
+        run: |
+          mkdir -p dist-bin
+          cp ${{ matrix.studio_binary }} dist-bin/
+          cp ${{ matrix.mcp_binary }} dist-bin/
+
       - name: Upload Binaries Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.platform }}
-          path: |
-            ${{ matrix.studio_binary }}
-            ${{ matrix.mcp_binary }}
+          path: dist-bin/*
           retention-days: 1
 
   commit-binaries:
@@ -117,16 +122,13 @@ jobs:
           mkdir -p binaries/windows binaries/macos binaries/linux
           
           # Copy Windows
-          cp temp-binaries/windows/sytra-studio.exe binaries/windows/
-          cp temp-binaries/windows/sytra-mcp.exe binaries/windows/
+          cp -r temp-binaries/windows/* binaries/windows/
           
           # Copy macOS
-          cp temp-binaries/macos/sytra-studio binaries/macos/
-          cp temp-binaries/macos/sytra-mcp binaries/macos/
+          cp -r temp-binaries/macos/* binaries/macos/
           
           # Copy Linux
-          cp temp-binaries/linux/sytra-studio binaries/linux/
-          cp temp-binaries/linux/sytra-mcp binaries/linux/
+          cp -r temp-binaries/linux/* binaries/linux/
           
           # Clean temp files
           rm -rf temp-binaries

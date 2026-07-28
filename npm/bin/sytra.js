@@ -54,11 +54,10 @@ const scriptsDir = path.join(sytraDir, 'scripts');
 const studioPath = path.join(binDir, exeName);
 const mcpPath = path.join(binDir, mcpExeName);
 
-// Helper function to download a file with redirect support
+// Helper function to download a file atomically with redirect support
 function downloadFile(url, destPath) {
+  const tmpPath = `${destPath}.tmp`;
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
-    
     function get(requestUrl) {
       https.get(requestUrl, (response) => {
         // Handle HTTP Redirects
@@ -72,14 +71,22 @@ function downloadFile(url, destPath) {
           return;
         }
         
+        const file = fs.createWriteStream(tmpPath);
         response.pipe(file);
         
         file.on('finish', () => {
-          file.close();
-          resolve();
+          file.close(() => {
+            try {
+              if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+              fs.renameSync(tmpPath, destPath);
+              resolve();
+            } catch (e) {
+              reject(e);
+            }
+          });
         });
       }).on('error', (err) => {
-        fs.unlink(destPath, () => {}); // Delete temp file on error
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
         reject(err);
       });
     }
@@ -167,7 +174,16 @@ async function installBinaries() {
 }
 
 async function run() {
-  const needsInstall = !fs.existsSync(studioPath) || !fs.existsSync(mcpPath);
+  let needsInstall = !fs.existsSync(studioPath) || !fs.existsSync(mcpPath);
+  if (!needsInstall) {
+    try {
+      if (fs.statSync(studioPath).size < 1000000 || fs.statSync(mcpPath).size < 1000000) {
+        needsInstall = true;
+      }
+    } catch {
+      needsInstall = true;
+    }
+  }
   
   if (command === 'install' || needsInstall) {
     await installBinaries();
