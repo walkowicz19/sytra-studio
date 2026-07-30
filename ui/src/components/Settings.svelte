@@ -113,6 +113,50 @@
     applyCustomTheme()
   }
 
+  function getEffectLabel(id: string): string {
+    if (id === 'none') return t('vs.fxStandard')
+    if (id === 'glassmorphism') return t('vs.fxGlass')
+    if (id === 'frosted') return t('vs.fxFrosted')
+    if (id === 'glow') return t('vs.fxGlow')
+    if (id === 'holographic') return t('vs.fxHolo')
+    if (id === 'cyberpunk') return t('vs.fxCyber')
+    if (id === 'scanlines') return t('vs.fxScan')
+    if (id === 'matrix') return t('vs.fxMatrix')
+    return id
+  }
+
+  function getEffectDesc(id: string): string {
+    if (id === 'none') return t('vs.fxStandardDesc')
+    if (id === 'glassmorphism') return t('vs.fxGlassDesc')
+    if (id === 'frosted') return t('vs.fxFrostedDesc')
+    if (id === 'glow') return t('vs.fxGlowDesc')
+    if (id === 'holographic') return t('vs.fxHoloDesc')
+    if (id === 'cyberpunk') return t('vs.fxCyberDesc')
+    if (id === 'scanlines') return t('vs.fxScanDesc')
+    if (id === 'matrix') return t('vs.fxMatrixDesc')
+    return ''
+  }
+
+  function getBgLabel(id: string): string {
+    if (id === 'default') return t('vs.bgDefault')
+    if (id === 'gradient') return t('vs.bgGradient')
+    if (id === 'mesh') return t('vs.bgMesh')
+    if (id === 'aurora') return t('vs.bgAurora')
+    if (id === 'image') return t('vs.bgImage')
+    if (id === 'gif') return t('vs.bgGif')
+    return id
+  }
+
+  function getBgDesc(id: string): string {
+    if (id === 'default') return t('vs.bgDefaultDesc')
+    if (id === 'gradient') return t('vs.bgGradientDesc')
+    if (id === 'mesh') return t('vs.bgMeshDesc')
+    if (id === 'aurora') return t('vs.bgAuroraDesc')
+    if (id === 'image') return t('vs.bgImageDesc')
+    if (id === 'gif') return t('vs.bgGifDesc')
+    return ''
+  }
+
   // Active visual studio section tabs
   let vsSection = $state<'colors' | 'effects' | 'background' | 'layout'>('colors')
 </script>
@@ -263,11 +307,11 @@
           <section class="card vs-card">
             <div class="card-header vs-header">
               <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
-                <i class="bi bi-palette2"></i> Visual Studio
-                <span class="vs-badge">FULL CUSTOMIZE</span>
+                <i class="bi bi-palette2"></i> {t('vs.title')}
+                <span class="vs-badge">{t('vs.fullCustomize')}</span>
               </span>
               <button class="btn-reset" onclick={resetTheme} title="Reset to defaults">
-                <i class="bi bi-arrow-counterclockwise"></i> Reset
+                <i class="bi bi-arrow-counterclockwise"></i> {t('vs.reset')}
               </button>
             </div>
 
@@ -276,21 +320,21 @@
               background: {customThemeStore.accentColor}18;
               border-bottom: 2px solid {customThemeStore.accentColor}44;
             ">
-              <div class="preview-pill" style="background:{customThemeStore.accentColor}">Accent</div>
-              <div class="preview-pill preview-ghost">Effect: <b>{customThemeStore.effect}</b></div>
-              <div class="preview-pill preview-ghost">BG: <b>{customThemeStore.bgType}</b></div>
+              <div class="preview-pill" style="background:{customThemeStore.accentColor}">{t('vs.accent')}</div>
+              <div class="preview-pill preview-ghost">{t('vs.effectLabel')} <b>{getEffectLabel(customThemeStore.effect)}</b></div>
+              <div class="preview-pill preview-ghost">{t('vs.bgLabel')} <b>{getBgLabel(customThemeStore.bgType)}</b></div>
               <div class="preview-mini-card">
-                <span style="color:{customThemeStore.accentColor}">✦</span> Preview Card
+                <span style="color:{customThemeStore.accentColor}">✦</span> {t('vs.previewCard')}
               </div>
             </div>
 
             <!-- Section tabs -->
             <div class="vs-tabs">
               {#each [
-                { id: 'colors',     icon: 'bi-palette',    label: 'Colors' },
-                { id: 'effects',    icon: 'bi-stars',      label: 'Effects' },
-                { id: 'background', icon: 'bi-image',      label: 'Background' },
-                { id: 'layout',     icon: 'bi-layout-text-sidebar', label: 'Layout' },
+                { id: 'colors',     icon: 'bi-palette',    label: t('vs.tabColors') },
+                { id: 'effects',    icon: 'bi-stars',      label: t('vs.tabEffects') },
+                { id: 'background', icon: 'bi-image',      label: t('vs.tabBackground') },
+                { id: 'layout',     icon: 'bi-layout-text-sidebar', label: t('vs.tabLayout') },
               ] as tab}
                 <button
                   id="vs-tab-{tab.id}"
@@ -308,7 +352,7 @@
               <!-- ═══ COLORS ═══ -->
               {#if vsSection === 'colors'}
                 <div class="vs-section">
-                  <div class="vs-row-label">Accent Color</div>
+                  <div class="vs-row-label">{t('vs.accentColor')}</div>
                   <div class="color-swatches">
                     {#each ACCENT_PRESETS as preset}
                       <button
@@ -335,12 +379,12 @@
                     <input class="hex-input" type="text" value={customThemeStore.accentColor}
                       oninput={(e) => { const v = (e.currentTarget as HTMLInputElement).value; if(/^#[0-9a-f]{6}$/i.test(v)) set('accentColor', v) }}
                     />
-                    <span class="hex-label">Brand Accent</span>
+                    <span class="hex-label">{t('vs.brandAccent')}</span>
                   </div>
 
                   <div class="divider"></div>
-                  <div class="vs-row-label">Gradient Secondary Color</div>
-                  <p class="settings-hint" style="margin-bottom:8px">Used in gradient, mesh, and aurora backgrounds</p>
+                  <div class="vs-row-label">{t('vs.gradientSecond')}</div>
+                  <p class="settings-hint" style="margin-bottom:8px">{t('vs.gradientSecondHint')}</p>
                   <div class="hex-preview-row">
                     <div class="hex-dot" style="background:{customThemeStore.gradientSecond}"></div>
                     <input class="hex-input" type="text" value={customThemeStore.gradientSecond}
@@ -356,7 +400,7 @@
               <!-- ═══ EFFECTS ═══ -->
               {:else if vsSection === 'effects'}
                 <div class="vs-section">
-                  <div class="vs-row-label">Visual Effect Preset</div>
+                  <div class="vs-row-label">{t('vs.effectPreset')}</div>
                   <div class="effect-grid">
                     {#each EFFECTS as fx}
                       <button
@@ -366,15 +410,15 @@
                         onclick={() => set('effect', fx.id)}
                       >
                         <span class="effect-icon">{fx.icon}</span>
-                        <span class="effect-name">{fx.label}</span>
-                        <span class="effect-desc">{fx.desc}</span>
+                        <span class="effect-name">{getEffectLabel(fx.id)}</span>
+                        <span class="effect-desc">{getEffectDesc(fx.id)}</span>
                       </button>
                     {/each}
                   </div>
 
                   {#if customThemeStore.effect === 'glassmorphism' || customThemeStore.effect === 'frosted'}
                     <div class="divider" style="margin:12px 0"></div>
-                    <div class="vs-row-label">Glass Blur — {customThemeStore.glassBlur}px</div>
+                    <div class="vs-row-label">{t('vs.glassBlur')} — {customThemeStore.glassBlur}px</div>
                     <div class="slider-row">
                       <span class="slider-label">0</span>
                       <input type="range" min="0" max="40" step="1" value={customThemeStore.glassBlur}
@@ -385,8 +429,8 @@
                     </div>
                     <div class="settings-item" style="margin-top:8px">
                       <div class="settings-info">
-                        <span class="settings-label">Blur Sidebar Too</span>
-                        <p class="settings-hint">Apply blur to the sidebar background</p>
+                        <span class="settings-label">{t('vs.blurSidebar')}</span>
+                        <p class="settings-hint">{t('vs.blurSidebarHint')}</p>
                       </div>
                       <label class="toggle">
                         <input type="checkbox" checked={customThemeStore.sidebarBlur}
@@ -398,7 +442,7 @@
 
                   {#if customThemeStore.effect === 'glow' || customThemeStore.effect === 'holographic'}
                     <div class="divider" style="margin:12px 0"></div>
-                    <div class="vs-row-label">Glow Intensity — {customThemeStore.glowIntensity}%</div>
+                    <div class="vs-row-label">{t('vs.glowIntensity')} — {customThemeStore.glowIntensity}%</div>
                     <div class="slider-row">
                       <span class="slider-label">0</span>
                       <input type="range" min="0" max="100" step="5" value={customThemeStore.glowIntensity}
@@ -413,7 +457,7 @@
               <!-- ═══ BACKGROUND ═══ -->
               {:else if vsSection === 'background'}
                 <div class="vs-section">
-                  <div class="vs-row-label">Background Style</div>
+                  <div class="vs-row-label">{t('vs.bgStyle')}</div>
                   <div class="bg-type-grid">
                     {#each BG_TYPES as bg}
                       <button
@@ -422,15 +466,15 @@
                         class:bg-card-active={customThemeStore.bgType === bg.id}
                         onclick={() => set('bgType', bg.id)}
                       >
-                        <span class="bg-name">{bg.label}</span>
-                        <span class="bg-desc">{bg.desc}</span>
+                        <span class="bg-name">{getBgLabel(bg.id)}</span>
+                        <span class="bg-desc">{getBgDesc(bg.id)}</span>
                       </button>
                     {/each}
                   </div>
 
                   {#if customThemeStore.bgType === 'gradient'}
                     <div class="divider" style="margin:12px 0"></div>
-                    <div class="vs-row-label">Gradient Direction</div>
+                    <div class="vs-row-label">{t('vs.gradientDir')}</div>
                     <div class="dir-grid">
                       {#each [
                         { id: 'top',          label: '↑ Top' },
@@ -451,7 +495,7 @@
 
                   {#if customThemeStore.bgType === 'image' || customThemeStore.bgType === 'gif'}
                     <div class="divider" style="margin:12px 0"></div>
-                    <div class="vs-row-label">Image / GIF URL or Path</div>
+                    <div class="vs-row-label">{t('vs.imageUrl')}</div>
                     <input type="text" class="input input-mono" style="width:100%;margin-bottom:8px"
                       placeholder="https://example.com/wallpaper.gif"
                       value={customThemeStore.bgUrl}
@@ -461,7 +505,7 @@
 
                   {#if customThemeStore.bgType !== 'default'}
                     <div class="divider" style="margin:12px 0"></div>
-                    <div class="vs-row-label">Background Opacity — {Math.round(customThemeStore.bgOpacity * 100)}%</div>
+                    <div class="vs-row-label">{t('vs.bgOpacity')} — {Math.round(customThemeStore.bgOpacity * 100)}%</div>
                     <div class="slider-row">
                       <span class="slider-label">0%</span>
                       <input type="range" min="0" max="0.9" step="0.05" value={customThemeStore.bgOpacity}
@@ -476,7 +520,7 @@
               <!-- ═══ LAYOUT ═══ -->
               {:else if vsSection === 'layout'}
                 <div class="vs-section">
-                  <div class="vs-row-label">Font Family</div>
+                  <div class="vs-row-label">{t('vs.fontFamily')}</div>
                   <div class="font-grid">
                     {#each FONT_PRESETS as fp}
                       <button
@@ -486,18 +530,18 @@
                         onclick={() => set('fontFamily', fp.id)}
                       >
                         <span class="font-preview" style="font-family:{fp.id === 'system' ? 'system-ui' : fp.id === 'jetbrains' ? 'monospace' : fp.label}">{fp.preview}</span>
-                        <span class="font-name">{fp.label}</span>
+                        <span class="font-name">{fp.id === 'system' ? t('vs.fontSystem') : fp.label}</span>
                       </button>
                     {/each}
                   </div>
 
                   <div class="divider" style="margin:12px 0"></div>
-                  <div class="vs-row-label">Border Radius</div>
+                  <div class="vs-row-label">{t('vs.borderRadius')}</div>
                   <div class="radius-grid">
                     {#each [
-                      { id: 'sharp',   label: 'Sharp',   style: 'border-radius:2px' },
-                      { id: 'default', label: 'Default', style: 'border-radius:6px' },
-                      { id: 'rounded', label: 'Rounded', style: 'border-radius:12px' },
+                      { id: 'sharp',   label: t('vs.radiusSharp'),   style: 'border-radius:2px' },
+                      { id: 'default', label: t('vs.radiusDefault'), style: 'border-radius:6px' },
+                      { id: 'rounded', label: t('vs.radiusRounded'), style: 'border-radius:12px' },
                     ] as r}
                       <button
                         class="radius-btn"
@@ -511,13 +555,13 @@
                   </div>
 
                   <div class="divider" style="margin:12px 0"></div>
-                  <div class="vs-row-label">Card Shadow</div>
+                  <div class="vs-row-label">{t('vs.cardShadow')}</div>
                   <div class="shadow-grid">
                     {#each [
-                      { id: 'none',     label: 'None' },
-                      { id: 'subtle',   label: 'Subtle' },
-                      { id: 'elevated', label: 'Elevated' },
-                      { id: 'neon',     label: 'Neon' },
+                      { id: 'none',     label: t('vs.shadowNone') },
+                      { id: 'subtle',   label: t('vs.shadowSubtle') },
+                      { id: 'elevated', label: t('vs.shadowElevated') },
+                      { id: 'neon',     label: t('vs.shadowNeon') },
                     ] as s}
                       <button
                         class="shadow-btn"

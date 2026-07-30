@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from '../api'
   import { hwStore } from '../store.svelte'
+  import { t } from '../i18n.svelte'
   import type { CatalogEntry } from '../types'
 
   // ─── State ───────────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@
   async function pickStorageDir() {
     try {
       const { open } = await import('@tauri-apps/plugin-dialog')
-      const picked = await open({ directory: true, title: 'Select storage directory for downloaded models' })
+      const picked = await open({ directory: true, title: t('models.downloadFolderPickerTitle') })
       if (typeof picked === 'string') {
         selectedDestDir = picked
       }
@@ -86,9 +87,9 @@
 
   function fitsBadge(entry: CatalogEntry): { label: string; cls: string } {
     const fit = fitsVRAM(entry)
-    if (fit === 'yes')        return { label: 'Fits VRAM',     cls: 'badge-green' }
-    if (fit === 'streaming')  return { label: 'Expert Stream', cls: 'badge-amber' }
-    return                          { label: 'Large Model',    cls: 'badge-red'   }
+    if (fit === 'yes')        return { label: t('models.badgeFitsVram'),     cls: 'badge-green' }
+    if (fit === 'streaming')  return { label: t('models.badgeExpertStream'), cls: 'badge-amber' }
+    return                          { label: t('models.badgeLargeModel'),    cls: 'badge-red'   }
   }
 
   async function handleCancelDownload() {
@@ -143,15 +144,15 @@
     <div class="hub-title-row">
       <span class="hub-icon"><i class="bi bi-download"></i></span>
       <div>
-        <h1 class="hub-title">Model Hub</h1>
-        <p class="hub-sub">Download GGUF models for inference or fine-tuning. Large MoE models stream via Sytra 1.2.0 GPU Expert Pager.</p>
+        <h1 class="hub-title">{t('models.title')}</h1>
+        <p class="hub-sub">{t('models.subtitle')}</p>
       </div>
     </div>
     {#if hwStore.info}
       <div class="hw-chips">
         <span class="chip"><i class="bi bi-gpu-card"></i> {vramGb} GB VRAM</span>
         <span class="chip"><i class="bi bi-memory"></i> {Math.round(hwStore.info.ram_mb / 1024)} GB RAM</span>
-        <span class="chip chip-brand"><i class="bi bi-lightning-charge-fill"></i> Expert Streaming ON</span>
+        <span class="chip chip-brand"><i class="bi bi-lightning-charge-fill"></i> {t('models.expertStreamingOn')}</span>
       </div>
     {/if}
   </div>
@@ -160,12 +161,12 @@
   <div class="card storage-section">
     <div class="storage-row">
       <div class="storage-info">
-        <span class="storage-label"><i class="bi bi-folder2"></i> Model Storage Destination:</span>
+        <span class="storage-label"><i class="bi bi-folder2"></i> {t('models.storageDestination')}</span>
         <span class="storage-path">{activeDestDir}</span>
       </div>
       <div class="storage-controls">
         <div class="quant-select-group">
-          <label for="quant-select-hdr" class="quant-select-label"><i class="bi bi-sliders"></i> Precision / Quant:</label>
+          <label for="quant-select-hdr" class="quant-select-label"><i class="bi bi-sliders"></i> {t('models.precisionQuant')}</label>
           <select id="quant-select-hdr" class="select select-sm quant-dropdown" bind:value={selectedQuant}>
             <option value="auto">Auto (Best for {vramGb} GB VRAM)</option>
             <option value="Q4_K_M">Q4_K_M (Balanced 4-bit - Recommended)</option>
@@ -175,7 +176,7 @@
           </select>
         </div>
         <button class="btn btn-secondary btn-sm" onclick={pickStorageDir}>
-          <i class="bi bi-folder2-open"></i> Browse Folder
+          <i class="bi bi-folder2-open"></i> {t('models.browseFolder')}
         </button>
       </div>
     </div>
@@ -188,8 +189,8 @@
         <div class="live-model-info">
           <span class="spinner"></span>
           <div>
-            <div class="live-model-name">Downloading {liveStatus.repo_id}</div>
-            <div class="live-file-sub">File {liveStatus.shard_index}/{liveStatus.total_shards}: {liveStatus.current_file}</div>
+            <div class="live-model-name">{t('models.downloading')} {liveStatus.repo_id}</div>
+            <div class="live-file-sub">{t('models.file')} {liveStatus.shard_index}/{liveStatus.total_shards}: {liveStatus.current_file}</div>
           </div>
         </div>
         <div class="live-stats">
@@ -197,7 +198,7 @@
           <span class="stat-badge"><i class="bi bi-clock-history"></i> ETA: {liveStatus.eta_formatted}</span>
           <span class="pct-badge">{liveStatus.pct}%</span>
           <button class="btn btn-red btn-sm" onclick={handleCancelDownload}>
-            <i class="bi bi-x-circle-fill"></i> Cancel Download
+            <i class="bi bi-x-circle-fill"></i> {t('models.cancelDownload')}
           </button>
         </div>
       </div>
@@ -205,35 +206,35 @@
         <div class="progress-bar-fill" style="width: {Math.max(liveStatus.pct, 2)}%"></div>
       </div>
       <div class="live-progress-footer">
-        <span>{liveStatus.downloaded_gb} GB / {liveStatus.total_gb} GB downloaded</span>
-        <span>Destination: {activeDestDir}</span>
+        <span>{liveStatus.downloaded_gb} GB / {liveStatus.total_gb} GB {t('models.downloaded')}</span>
+        <span>{t('models.destination')} {activeDestDir}</span>
       </div>
     </div>
   {/if}
 
   <!-- Custom download -->
   <div class="card custom-section">
-    <div class="card-title"><i class="bi bi-cloud-arrow-down"></i> Custom Download</div>
+    <div class="card-title"><i class="bi bi-cloud-arrow-down"></i> {t('models.customDownload')}</div>
     <div class="custom-row">
       <input
         id="custom-repo-input"
         class="input"
-        placeholder="HuggingFace repo ID (e.g. ggml-org/Kimi-VL-A3B-Thinking-2506-GGUF)"
+        placeholder={t('models.repoPlaceholder')}
         bind:value={customRepo}
       />
       <select id="custom-purpose-select" class="select" bind:value={customPurpose}>
-        <option value="inference">Inference (GGUF)</option>
-        <option value="finetune">Fine-tune (safetensors)</option>
-        <option value="merge">Merge (safetensors)</option>
+        <option value="inference">{t('models.inferenceGguf')}</option>
+        <option value="finetune">{t('models.finetuneSafetensors')}</option>
+        <option value="merge">{t('models.mergeSafetensors')}</option>
       </select>
       <input
         id="custom-dest-input"
         class="input input-sm"
-        placeholder="Custom destination dir (optional)"
+        placeholder={t('models.destDirPlaceholder')}
         bind:value={customDestDir}
       />
       <button id="custom-download-btn" class="btn btn-primary" onclick={downloadCustom} disabled={!customRepo.trim()}>
-        <i class="bi bi-cloud-arrow-down"></i> Download
+        <i class="bi bi-cloud-arrow-down"></i> {t('models.download')}
       </button>
     </div>
     {#if downloads[customRepo.trim()]}
@@ -257,7 +258,7 @@
 
   <!-- Catalog grid -->
   {#if loading}
-    <div class="loading-state"><span class="spinner"></span> Loading catalog…</div>
+    <div class="loading-state"><span class="spinner"></span> {t('models.loadingCatalog')}</div>
   {:else if error}
     <div class="error-state"><i class="bi bi-exclamation-triangle"></i> {error}</div>
   {:else}
@@ -267,7 +268,7 @@
         {@const badge = fitsBadge(entry)}
         <div class="model-card" class:card-recommended={entry.recommended}>
           {#if entry.recommended}
-            <div class="recommended-ribbon"><i class="bi bi-star-fill"></i> Recommended</div>
+            <div class="recommended-ribbon"><i class="bi bi-star-fill"></i> {t('models.badgeRecommended')}</div>
           {/if}
           <div class="model-top">
             <div class="model-name">{entry.name}</div>
@@ -287,7 +288,7 @@
           {#if fitsVRAM(entry) === 'streaming'}
             <div class="stream-note">
               <i class="bi bi-lightning-charge-fill"></i>
-              Too large for full VRAM load — Sytra's GPU Expert Streaming Pager will stream active experts only, targeting 5–10 tok/s without freezing.
+              {t('models.expertStreamWarning')}
             </div>
           {/if}
 
@@ -299,11 +300,11 @@
               disabled={dl?.status === 'downloading'}
             >
               {#if dl?.status === 'downloading'}
-                <span class="spinner-sm"></span> Downloading…
+                <span class="spinner-sm"></span> {t('models.downloading')}…
               {:else if dl?.status === 'done'}
-                <i class="bi bi-check-circle-fill"></i> Downloaded
+                <i class="bi bi-check-circle-fill"></i> {t('models.downloaded')}
               {:else}
-                <i class="bi bi-cloud-arrow-down"></i> Download
+                <i class="bi bi-cloud-arrow-down"></i> {t('models.download')}
               {/if}
             </button>
             {#if dl?.status === 'downloading' || (liveStatus && liveStatus.repo_id === entry.id && liveStatus.status === 'downloading')}
