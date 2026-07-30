@@ -1,5 +1,6 @@
 <script lang="ts">
   import { setTab } from '../store.svelte'
+  import { t } from '../i18n.svelte'
 
   let activeSection = $state<'train' | 'merge' | 'export'>('train')
 </script>
@@ -7,8 +8,8 @@
 <div class="page-layout">
   <div class="page-header">
     <div class="page-header-left">
-      <h1 class="text-display">Algorithm & Merge Guide</h1>
-      <p class="text-small">Learn when and how to configure fine-tuning and weight merging</p>
+      <h1 class="text-display">{t('help.title')}</h1>
+      <p class="text-small">{t('help.subtitle')}</p>
     </div>
   </div>
 
@@ -17,13 +18,13 @@
     <!-- Switcher -->
     <div class="segmented-control" style="align-self:flex-start">
       <button class:active={activeSection === 'train'} onclick={() => activeSection = 'train'}>
-        <i class="bi bi-fire" style="margin-right:4px"></i> Fine-Tuning Algorithms
+        <i class="bi bi-fire" style="margin-right:4px"></i> {t('help.tab.train')}
       </button>
       <button class:active={activeSection === 'merge'} onclick={() => activeSection = 'merge'}>
-        <i class="bi bi-lightning-charge" style="margin-right:4px"></i> Merge Methods
+        <i class="bi bi-lightning-charge" style="margin-right:4px"></i> {t('help.tab.merge')}
       </button>
       <button class:active={activeSection === 'export'} onclick={() => activeSection = 'export'}>
-        <i class="bi bi-box-arrow-up-right" style="margin-right:4px"></i> Export to Ollama / GGUF
+        <i class="bi bi-box-arrow-up-right" style="margin-right:4px"></i> {t('help.tab.export')}
       </button>
     </div>
 
@@ -31,54 +32,54 @@
       <div class="grid-2 animate-in">
         <!-- SFT -->
         <section class="card">
-          <div class="card-header"><span class="text-label">SFT (Supervised Fine-Tuning)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.sft.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Directly teaches the model to match specific target responses given a prompt. It updates the weights via standard cross-entropy loss.
+              {t('help.sft.desc')}
             </p>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Best For</span>
-              <span class="text-small">Learning new formatting, style adjustments, or mimicking specific conversation templates.</span>
+              <span class="text-label" style="font-size:10px">{t('help.bestFor')}</span>
+              <span class="text-small">{t('help.sft.best')}</span>
             </div>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Common Pitfall</span>
-              <span class="text-small" style="color:var(--color-warn)">Overfitting. If trained for too many steps or with high learning rates, the model will lose general knowledge.</span>
+              <span class="text-label" style="font-size:10px">{t('help.commonPitfall')}</span>
+              <span class="text-small" style="color:var(--color-warn)">{t('help.sft.pitfall')}</span>
             </div>
           </div>
         </section>
 
         <!-- DPO -->
         <section class="card">
-          <div class="card-header"><span class="text-label">DPO (Direct Preference Optimization)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.dpo.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Bypasses the traditional reinforcement learning reward-model step by training the policy model directly on pairwise choice preferences.
+              {t('help.dpo.desc')}
             </p>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Best For</span>
-              <span class="text-small">Aligning model behavior, matching human tone preferences, or steering formatting rules.</span>
+              <span class="text-label" style="font-size:10px">{t('help.bestFor')}</span>
+              <span class="text-small">{t('help.dpo.best')}</span>
             </div>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Dataset Requirement</span>
-              <span class="text-small">Needs <code>prompt</code>, <code>chosen</code> (preferred response), and <code>rejected</code> (worse response) fields.</span>
+              <span class="text-label" style="font-size:10px">{t('help.datasetReq')}</span>
+              <span class="text-small">{t('help.dpo.req')}</span>
             </div>
           </div>
         </section>
 
         <!-- ORPO & CPO -->
         <section class="card col-2">
-          <div class="card-header"><span class="text-label">ORPO & CPO (One-Step Alignment)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.orpo.title')}</span></div>
           <div class="card-body grid-2" style="gap:var(--space-4)">
             <div>
-              <div class="text-title" style="font-size:13px; font-weight:600">ORPO</div>
+              <div class="text-title" style="font-size:13px; font-weight:600">{t('help.orpo.name')}</div>
               <p class="text-small" style="margin-top:4px; color:var(--color-ink-subtle)">
-                Odds Ratio Preference Optimization integrates preference penalty directly into the SFT objective, eliminating the need for a separate SFT phase.
+                {t('help.orpo.desc')}
               </p>
             </div>
             <div>
-              <div class="text-title" style="font-size:13px; font-weight:600">CPO</div>
+              <div class="text-title" style="font-size:13px; font-weight:600">{t('help.cpo.name')}</div>
               <p class="text-small" style="margin-top:4px; color:var(--color-ink-subtle)">
-                Contrastive Preference Optimization is specifically designed to align translation or reasoning outputs without needing a reference model, lowering VRAM.
+                {t('help.cpo.desc')}
               </p>
             </div>
           </div>
@@ -88,46 +89,45 @@
       <div class="grid-2 animate-in">
         <!-- SLERP -->
         <section class="card">
-          <div class="card-header"><span class="text-label">SLERP (Spherical Linear Interpolation)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.slerp.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Blends two models spherically on a unit hypersphere, preserving weight norms and tensor angles.
+              {t('help.slerp.desc')}
             </p>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Best For</span>
-              <span class="text-small">Seamlessly combining two models of identical architecture (e.g., base model and its specialist instruct version).</span>
+              <span class="text-label" style="font-size:10px">{t('help.bestFor')}</span>
+              <span class="text-small">{t('help.slerp.best')}</span>
             </div>
           </div>
         </section>
 
         <!-- TIES & DARE-TIES -->
         <section class="card">
-          <div class="card-header"><span class="text-label">TIES & DARE-TIES</span></div>
+          <div class="card-header"><span class="text-label">{t('help.ties.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Resolves parameter conflicts across multiple models by dropping non-significant deltas and scaling/aligning task vectors.
+              {t('help.ties.desc')}
             </p>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Best For</span>
-              <span class="text-small">Merging up to 3 specialist models (e.g., math, code, and chat) back into a single base model.</span>
+              <span class="text-label" style="font-size:10px">{t('help.bestFor')}</span>
+              <span class="text-small">{t('help.ties.best')}</span>
             </div>
           </div>
         </section>
 
         <!-- MoE / FrankenMoE -->
         <section class="card col-2">
-          <div class="card-header"><span class="text-label">FrankenMoE (Mixture of Experts)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.moe.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Combines independent LLMs into a sparse Mixture of Experts (MoE) structure by slicing layers and introducing routing gates.
+              {t('help.moe.desc')}
             </p>
             <div class="tip-card" style="border-left: 3px solid var(--color-warn); background:var(--color-surface-muted); padding:var(--space-3)">
               <div class="text-title" style="font-size:12px; font-weight:600; color:var(--color-warn)">
-                <i class="bi bi-exclamation-triangle-fill" style="margin-right:4px"></i> HEALING RUN REQUIRED
+                <i class="bi bi-exclamation-triangle-fill" style="margin-right:4px"></i> {t('help.moe.warningTitle')}
               </div>
               <p class="text-small" style="margin-top:4px; color:var(--color-ink-subtle)">
-                FrankenMoE models almost always produce gibberish or disjoint outputs initially because routing gates have random weights.
-                <strong>You must run a subsequent SFT training (Healing)</strong> immediately on the merged MoE model to align the gating system.
+                {t('help.moe.warningDesc')}
               </p>
             </div>
           </div>
@@ -137,23 +137,23 @@
       <div class="grid-2 animate-in">
         <!-- Llama.cpp / GGUF conversion -->
         <section class="card">
-          <div class="card-header"><span class="text-label">Convert to GGUF (Llama.cpp)</span></div>
+          <div class="card-header"><span class="text-label">{t('help.exportGguf.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <p class="text-body" style="font-size:13px">
-              Llama.cpp, Ollama, and LM Studio run models in the optimized <strong>GGUF</strong> format. First, convert your local PyTorch or SafeTensors weights.
+              {t('help.exportGguf.desc')}
             </p>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Step 1: Clone llama.cpp</span>
+              <span class="text-label" style="font-size:10px">{t('help.exportGguf.step1')}</span>
               <pre class="text-small" style="background:var(--color-surface); padding:var(--space-2); border-radius:4px; overflow:auto; margin:0"><code>git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 pip install -r requirements.txt</code></pre>
             </div>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Step 2: Convert weights</span>
+              <span class="text-label" style="font-size:10px">{t('help.exportGguf.step2')}</span>
               <pre class="text-small" style="background:var(--color-surface); padding:var(--space-2); border-radius:4px; overflow:auto; margin:0"><code>python convert_hf_to_gguf.py /path/to/my-model --outfile my-model.gguf --outtype f16</code></pre>
             </div>
             <div class="info-block">
-              <span class="text-label" style="font-size:10px">Step 3: Quantize (Optional for Q4_K_M)</span>
+              <span class="text-label" style="font-size:10px">{t('help.exportGguf.step3')}</span>
               <pre class="text-small" style="background:var(--color-surface); padding:var(--space-2); border-radius:4px; overflow:auto; margin:0"><code>./llama-quantize my-model.gguf my-model-Q4_K_M.gguf Q4_K_M</code></pre>
             </div>
           </div>
@@ -161,24 +161,24 @@ pip install -r requirements.txt</code></pre>
 
         <!-- Ollama and LM Studio integration -->
         <section class="card">
-          <div class="card-header"><span class="text-label">Run in Ollama & LM Studio</span></div>
+          <div class="card-header"><span class="text-label">{t('help.runOllama.title')}</span></div>
           <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-3)">
             <div class="info-block">
-              <span class="text-label" style="font-size:11px; font-weight:600; color:var(--color-brand)">Ollama Integration</span>
-              <span class="text-small" style="margin-top:var(--space-1)">Create a file named <code>Modelfile</code> with the following contents:</span>
+              <span class="text-label" style="font-size:11px; font-weight:600; color:var(--color-brand)">{t('help.runOllama.ollamaTitle')}</span>
+              <span class="text-small" style="margin-top:var(--space-1)">{t('help.runOllama.modelfile')}</span>
               <pre class="text-small" style="background:var(--color-surface); padding:var(--space-2); border-radius:4px; overflow:auto; margin-top:4px"><code>FROM ./my-model-Q4_K_M.gguf
 TEMPLATE "{"{{ .System }}"}\nUSER: {"{{ .Prompt }}"}\nASSISTANT: "
 PARAMETER stop "USER:"
 PARAMETER stop "ASSISTANT:"</code></pre>
-              <span class="text-small" style="margin-top:var(--space-1)">Then compile and run it in Ollama:</span>
+              <span class="text-small" style="margin-top:var(--space-1)">{t('help.runOllama.compile')}</span>
               <pre class="text-small" style="background:var(--color-surface); padding:var(--space-2); border-radius:4px; overflow:auto; margin-top:4px"><code>ollama create sytra-model -f Modelfile
 ollama run sytra-model</code></pre>
             </div>
             <div class="info-block" style="margin-top:var(--space-2)">
-              <span class="text-label" style="font-size:11px; font-weight:600; color:#1d5fa6">LM Studio & Llama.cpp</span>
+              <span class="text-label" style="font-size:11px; font-weight:600; color:#1d5fa6">{t('help.runOllama.lmTitle')}</span>
               <ul class="text-small" style="padding-left:16px; margin:4px 0 0 0; line-height:1.5">
-                <li><strong>LM Studio</strong>: Open LM Studio, go to the Local Server tab, select "Load Model", and choose your converted <code>my-model-Q4_K_M.gguf</code> file.</li>
-                <li><strong>Llama.cpp CLI</strong>: Run inference directly from command line:
+                <li>{t('help.runOllama.lmDesc')}</li>
+                <li>{t('help.runOllama.cliDesc')}
                   <pre style="background:var(--color-surface); padding:var(--space-1); border-radius:4px; overflow:auto; margin-top:4px"><code>./llama-cli -m my-model-Q4_K_M.gguf -p "Hello!"</code></pre>
                 </li>
               </ul>

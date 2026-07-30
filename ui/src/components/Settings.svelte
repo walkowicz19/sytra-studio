@@ -9,13 +9,6 @@
   let detectedRamMb = $state(0)
   let memoryChoice = $state('auto')
 
-  let defaultContext = $state<number>(4096)
-  let defaultTemp = $state<number>(0.7)
-  let enableFlashAttn = $state<boolean>(true)
-  let kvCacheQuant = $state<string>('q8_0')
-  let vramLimitMb = $state<number>(8192)
-  let cpuKvCache = $state<boolean>(false)
-
   // Visual Studio preview auto-updates live
   $effect(() => {
     // Touch any theme property to trigger re-render
@@ -73,12 +66,6 @@
       cacheDir = settings.hf_cache_dir
       detectedRamMb = settings.detected_ram_mb
       memoryChoice = settings.main_memory_limit_mb?.toString() ?? 'auto'
-      if (settings.default_context_window) defaultContext = settings.default_context_window
-      if (settings.default_temperature !== undefined) defaultTemp = settings.default_temperature
-      if (settings.enable_flash_attention !== undefined) enableFlashAttn = settings.enable_flash_attention
-      if (settings.kv_cache_quant) kvCacheQuant = settings.kv_cache_quant
-      if (settings.vram_limit_mb) vramLimitMb = settings.vram_limit_mb
-      if (settings.cpu_kv_cache !== undefined) cpuKvCache = settings.cpu_kv_cache
     } catch {}
   })
 
@@ -184,8 +171,8 @@
               <div class="divider"></div>
               <div class="settings-item">
                 <div class="settings-info">
-                  <span class="settings-label">Dark Mode</span>
-                  <p class="settings-hint">Toggle between dark and light theme</p>
+                  <span class="settings-label">{t('settings.darkMode')}</span>
+                  <p class="settings-hint">{t('settings.darkModeHint')}</p>
                 </div>
                 <div class="settings-control">
                   <label class="toggle" id="toggle-dark-mode">
@@ -212,7 +199,7 @@
               <div class="picker-row">
                 <input type="text" class="input input-mono" readonly value={cacheDir} style="flex:1" />
                 <button class="btn btn-secondary" onclick={pickCacheDir} id="btn-pick-cache-dir" style="height:34px">
-                  <i class="bi bi-folder2-open" style="font-size:13px;margin-right:var(--space-2)"></i> Browse
+                  <i class="bi bi-folder2-open" style="font-size:13px;margin-right:var(--space-2)"></i> {t('settings.browse')}
                 </button>
               </div>
             </div>
@@ -222,99 +209,22 @@
           <section class="card">
             <div class="card-header">
               <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
-                <i class="bi bi-cpu"></i> Memory limit
+                <i class="bi bi-cpu"></i> {t('settings.memoryTitle')}
               </span>
             </div>
             <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
               <div class="settings-info">
                 <label for="select-memory-limit" class="settings-label">{t('settings.mainMemory')}</label>
-                <p class="settings-hint">Limit Sytra's host RAM allocation. Automatic is recommended.</p>
+                <p class="settings-hint">{t('settings.memoryHint')}</p>
               </div>
               <select id="select-memory-limit" class="select" value={memoryChoice} onchange={changeMemoryLimit}>
-                <option value="auto">Automatic</option>
+                <option value="auto">{t('settings.auto')}</option>
                 {#if detectedRamMb > 0}
                   <option value={Math.floor(detectedRamMb * 0.5)}>50% ({(detectedRamMb * 0.5 / 1024).toFixed(0)} GB)</option>
                   <option value={Math.floor(detectedRamMb * 0.75)}>75% ({(detectedRamMb * 0.75 / 1024).toFixed(0)} GB)</option>
                   <option value={Math.floor(detectedRamMb * 0.9)}>90% ({(detectedRamMb * 0.9 / 1024).toFixed(0)} GB)</option>
                 {/if}
               </select>
-            </div>
-          </section>
-
-          <!-- Model Inference & Context Window Parameters -->
-          <section class="card">
-            <div class="card-header">
-              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
-                <i class="bi bi-cpu-fill"></i> Model Inference & Context Window
-              </span>
-            </div>
-            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-4)">
-              <div class="settings-item">
-                <div class="settings-info">
-                  <label for="select-default-context" class="settings-label">Default Context Window</label>
-                  <p class="settings-hint">Max context tokens. Lowering to 4K/8K prevents KV cache VRAM freezing.</p>
-                </div>
-                <div class="settings-control">
-                  <select id="select-default-context" class="select" bind:value={defaultContext}>
-                    <option value={2048}>2048 tokens (2K - Low VRAM)</option>
-                    <option value={4096}>4096 tokens (4K - Recommended)</option>
-                    <option value={8192}>8192 tokens (8K - Balanced)</option>
-                    <option value={16384}>16384 tokens (16K - High VRAM)</option>
-                  </select>
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div class="settings-item">
-                <div class="settings-info">
-                  <label for="input-default-temp" class="settings-label">Sampling Temperature</label>
-                  <p class="settings-hint">Randomness for generation ({defaultTemp})</p>
-                </div>
-                <div class="settings-control">
-                  <input type="range" id="input-default-temp" min="0.0" max="1.5" step="0.05" bind:value={defaultTemp} style="width: 140px;" />
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div class="settings-item">
-                <div class="settings-info">
-                  <label for="select-kv-quant" class="settings-label">KV Cache Precision</label>
-                  <p class="settings-hint">Quantize KV cache to save 50-75% VRAM</p>
-                </div>
-                <div class="settings-control">
-                  <select id="select-kv-quant" class="select" bind:value={kvCacheQuant}>
-                    <option value="q8_0">Q8_0 (8-bit - Recommended)</option>
-                    <option value="q4_0">Q4_0 (4-bit - Max Savings)</option>
-                    <option value="fp16">FP16 (16-bit Full Precision)</option>
-                  </select>
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div class="settings-item">
-                <div class="settings-info">
-                  <label for="select-vram-limit" class="settings-label">VRAM Model Weights Ceiling</label>
-                  <p class="settings-hint">Hard VRAM cap for model weights (Leaves ~2-3 GB for CUDA/desktop).</p>
-                </div>
-                <div class="settings-control">
-                  <select id="select-vram-limit" class="select" bind:value={vramLimitMb}>
-                    <option value={6144}>6144 MB (6 GB - Low VRAM GPUs)</option>
-                    <option value={8192}>8192 MB (8 GB - Recommended for 12GB GPUs)</option>
-                    <option value={9728}>9728 MB (9.5 GB - Tight Headroom)</option>
-                    <option value={10240}>10240 MB (10 GB - Max Allocation)</option>
-                  </select>
-                </div>
-              </div>
-              <div class="divider"></div>
-              <div class="settings-item">
-                <div class="settings-info">
-                  <span class="settings-label">Offload KV Cache to CPU RAM</span>
-                  <p class="settings-hint">Store 100% of KV Cache in System RAM to completely prevent GPU VRAM freezing.</p>
-                </div>
-                <div class="settings-control">
-                  <label class="toggle" id="toggle-cpu-kv-cache">
-                    <input type="checkbox" bind:checked={cpuKvCache} />
-                    <div class="toggle-track"><div class="toggle-thumb"></div></div>
-                  </label>
-                </div>
-              </div>
             </div>
           </section>
 

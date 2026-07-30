@@ -89,27 +89,25 @@ This CLI installer automatically handles downloading pre-compiled release binari
 2. Choose a merge method (e.g. SLERP for divergent models, TIES or DARE-TIES for related fine-tunes).
 3. Start the process. Sytra runs the merge on CPU/GPU and logs progress directly to your runs history.
 
-### 3. Using Sytra via MCP (Claude Code, Cursor, Codex)
-The `sytra-mcp` server exposes tools for model inspection, catalog recommendations, dataset previews, and execution controls.
+### 4. Using Sytra via MCP (Claude Code, Cursor, Codex, VSCode)
+The `sytra-mcp` server exposes tools for model inspection, catalog recommendations, dataset previews, and execution controls via standard `npx` execution:
 - **Codex configuration (`~/.codex/config.toml`)**:
   ```toml
   [mcp_servers.sytra-studio]
-  command = "D:\\Projects\\sytra-studio\\target-build\\release\\sytra-mcp.exe"
-  env = { SYTRA_WORKSPACE = "D:\\Projects\\sytra-studio" }
+  command = "npx"
+  args = ["-y", "sytra-studio@latest", "mcp"]
   ```
 - **Claude Code configuration**:
   ```bash
-  claude mcp add sytra-studio -e SYTRA_WORKSPACE=D:\Projects\sytra-studio -- D:\Projects\sytra-studio\target-build\release\sytra-mcp.exe
+  claude mcp add sytra-studio -- npx -y sytra-studio@latest mcp
   ```
-- **Cursor configuration (`project-level or global JSON`)**:
+- **Cursor / VSCode configuration (`mcp.json` or settings)**:
   ```json
   {
     "mcpServers": {
       "sytra-studio": {
-        "command": "D:\\Projects\\sytra-studio\\target-build\\release\\sytra-mcp.exe",
-        "env": {
-          "SYTRA_WORKSPACE": "D:\\Projects\\sytra-studio"
-        }
+        "command": "npx",
+        "args": ["-y", "sytra-studio@latest", "mcp"]
       }
     }
   }

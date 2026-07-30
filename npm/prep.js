@@ -10,7 +10,14 @@ function copyDirSync(src, dest) {
     const destPath = path.join(dest, entry.name);
 
     if (entry.isDirectory()) {
-      if (entry.name !== '__pycache__' && entry.name !== '.pytest_cache' && entry.name !== '.sytra-envs') {
+      if (
+        entry.name !== '__pycache__' &&
+        entry.name !== '.pytest_cache' &&
+        entry.name !== '.sytra-envs' &&
+        entry.name !== '.hf-cache' &&
+        entry.name !== '.test-dl' &&
+        entry.name !== '.test-download'
+      ) {
         copyDirSync(srcPath, destPath);
       }
     } else {
