@@ -11,10 +11,14 @@ test('renders v1 UI and shared resource controls without browser errors', async 
 
   await expect(page.getByText('STUDIO', { exact: true })).toBeVisible()
   await expect(page.getByText('STUDIO — 01', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('v1.0.0', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Choose where models are downloaded' })).toBeVisible()
+  await expect(page.getByText('v1.2.0', { exact: true })).toBeVisible()
 
-  const memory = page.getByLabel('Main memory limit')
+  await page.getByRole('button', { name: /Settings/ }).click()
+  await expect(page.getByText('Choose where models are downloaded')).toBeVisible()
+  await expect(page.locator('#btn-pick-cache-dir')).toBeVisible()
+  await expect(page.locator('#select-memory-limit option', { hasText: '75%' })).toHaveCount(1)
+
+  const memory = page.getByLabel('Main memory')
   await expect(memory).toBeVisible()
   await expect(memory).toHaveValue('auto')
   const seventyFiveValue = await memory.locator('option').filter({ hasText: '75%' }).getAttribute('value')

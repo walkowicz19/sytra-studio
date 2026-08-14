@@ -40,7 +40,9 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../runner": "runner"
+      "../runner/sytra_runner": "runner/sytra_runner",
+      "../runner/scripts": "runner/scripts",
+      "../runner/pyproject.toml": "runner/pyproject.toml"
     }
   }
 }

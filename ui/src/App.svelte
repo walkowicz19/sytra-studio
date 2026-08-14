@@ -2,21 +2,26 @@
   import { tabStore, setTab, run, toastStore, hwStore, setHwInfo, uiMode } from './store.svelte'
   import { api } from './api'
   import Sidebar from './components/Sidebar.svelte'
-  import TrainForm from './components/TrainForm.svelte'
-  import MergeForm from './components/MergeForm.svelte'
-  import SimpleTrain from './components/SimpleTrain.svelte'
-  import SimpleMerge from './components/SimpleMerge.svelte'
+  import TrainForm from './features/train/TrainForm.svelte'
+  import MergeForm from './features/merge/MergeForm.svelte'
+  import SimpleTrain from './features/train/SimpleTrain.svelte'
+  import SimpleMerge from './features/merge/SimpleMerge.svelte'
   import LiveView from './components/LiveView.svelte'
   import Runs from './components/Runs.svelte'
   import Guider from './components/Guider.svelte'
   import Help from './components/Help.svelte'
-  import Settings from './components/Settings.svelte'
-  import ModelHub from './components/ModelHub.svelte'
+  import Settings from './features/settings/Settings.svelte'
+  import ModelHub from './features/models/ModelHub.svelte'
   import Toast from './components/Toast.svelte'
   import { onMount } from 'svelte'
 
   onMount(async () => {
-    try { const info = await api.getHardwareInfo(); setHwInfo(info) } catch {}
+    try {
+      const info = await api.getHardwareInfo()
+      setHwInfo(info)
+    } catch (e) {
+      console.error('Failed to load hardware info', e)
+    }
   })
 </script>
 

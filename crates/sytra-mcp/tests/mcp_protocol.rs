@@ -81,19 +81,17 @@ fn handshake_lists_tools_and_answers_calls() {
     assert_eq!(init["result"]["serverInfo"]["name"], "sytra-studio");
     assert!(init["result"]["capabilities"]["tools"].is_object());
 
-    // 2. tools/list carries the full tool set
+    // 2. tools/list carries the frozen tool set and input schemas
     let tools = client.request("tools/list", json!({}));
-    let names: Vec<&str> = tools["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
-    for expected in [
+    let listed = tools["result"]["tools"].as_array().unwrap();
+    let names: Vec<&str> = listed.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    const FROZEN_TOOLS: &[&str] = &[
         "get_status",
         "get_settings",
         "set_cache_dir",
         "set_main_memory_limit",
+        "configure_fast_cache",
+        "download_model",
         "list_catalog",
         "guider_recommend",
         "merge_check",
@@ -103,9 +101,28 @@ fn handshake_lists_tools_and_answers_calls() {
         "start_merge",
         "stop_op",
         "preview_dataset",
-    ] {
-        assert!(names.contains(&expected), "missing tool {expected}");
-    }
+        "export_guide",
+        "plan_inference",
+    ];
+    assert_eq!(names, FROZEN_TOOLS, "MCP tool names/order must stay stable");
+    let required_by_name: std::collections::BTreeMap<&str, Vec<&str>> = listed
+        .iter()
+        .map(|t| {
+            let name = t["name"].as_str().unwrap();
+            let required = t["inputSchema"]["required"]
+                .as_array()
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+            (name, required)
+        })
+        .collect();
+    assert_eq!(required_by_name["download_model"], vec!["model"]);
+    assert_eq!(required_by_name["merge_check"], vec!["models", "method"]);
+    assert_eq!(required_by_name["get_run"], vec!["op_id"]);
+    assert_eq!(required_by_name["start_train"], vec!["config"]);
+    assert_eq!(required_by_name["start_merge"], vec!["config"]);
+    assert_eq!(required_by_name["preview_dataset"], vec!["source"]);
+    assert_eq!(required_by_name["plan_inference"], vec!["model_path"]);
 
     // 3. get_status returns hardware info
     let status = client.call_tool("get_status", json!({}));

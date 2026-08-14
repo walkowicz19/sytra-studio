@@ -1,7 +1,7 @@
-"""Selective Shard & MoE Expert Pruning Manager for Sytra.
+"""Model shard manifest inspection for Sytra.
 
 Inspects model manifest structures (model.safetensors.index.json) to extract tensor
-locations and map required backbone + active expert shards for automatic MoE pruning.
+locations. Quality-preserving downloads always retain the complete shard set.
 """
 from __future__ import annotations
 
@@ -77,30 +77,13 @@ class ShardManager:
         top_k_experts: int | None = None,
         target_domain: str | None = None,
     ) -> list[str]:
-        """Select required safetensor shards based on backbone + active expert selection."""
+        """Return every weight shard required by the checkpoint.
+
+        ``num_experts_per_tok`` is the number chosen by the router for one
+        token, not a fixed subset of experts that can be deleted. Older Sytra
+        releases incorrectly treated experts ``0..K-1`` as the active set.
+        Keep the legacy arguments for API compatibility, but never use them to
+        change model semantics.
+        """
         analysis = self.analyze_model_manifest()
-        weight_map = analysis["weight_map"]
-        all_shards = analysis["all_shards"]
-
-        if not weight_map or not analysis["is_moe"]:
-            # Standard dense model or single shard
-            return all_shards
-
-        k = top_k_experts or analysis["num_experts_per_tok"]
-        num_total_experts = analysis["num_experts"]
-
-        # Automatic expert selection strategy: select top-K active experts
-        # (Default: keep active router experts 0..K-1 or domain-routed expert subset)
-        active_expert_ids = list(range(min(k, num_total_experts)))
-
-        required_tensors = set(analysis["backbone_tensors"])
-        for exp_id in active_expert_ids:
-            for t_name in analysis["expert_tensors"].get(exp_id, []):
-                required_tensors.add(t_name)
-
-        required_shards = set()
-        for t_name in required_tensors:
-            if t_name in weight_map:
-                required_shards.add(weight_map[t_name])
-
-        return sorted(list(required_shards))
+        return analysis["all_shards"]

@@ -22,6 +22,13 @@ fn run_module_and_parse(module: &str, config_rel_path: &str) -> Option<Vec<Telem
         .current_dir(&root)
         .output()
         .ok()?;
+    if output.stdout.is_empty() {
+        eprintln!(
+            "skipping: python produced no stdout (stderr: {})",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Some(
@@ -39,7 +46,11 @@ fn assert_well_formed_and_no_log_fallback(lines: &[TelemetryLine]) {
     let mut terminal_count = 0;
     for line in lines {
         match line {
-            TelemetryLine::Log { ts: None, line: raw, .. } => {
+            TelemetryLine::Log {
+                ts: None,
+                line: raw,
+                ..
+            } => {
                 panic!("a real telemetry line fell back to Log (parser regression?): {raw}")
             }
             TelemetryLine::Log { ts: Some(_), .. } => {}
@@ -64,6 +75,10 @@ fn headless_train_subprocess_produces_valid_transcript() {
         return;
     };
     assert_well_formed_and_no_log_fallback(&lines);
+    assert!(
+        lines.iter().any(|line| matches!(line, TelemetryLine::Event { event, .. } if event == "error")),
+        "CPU/no-deps train must fail closed"
+    );
 }
 
 #[test]
@@ -74,4 +89,8 @@ fn headless_merge_subprocess_produces_valid_transcript() {
         return;
     };
     assert_well_formed_and_no_log_fallback(&lines);
+    assert!(
+        lines.iter().any(|line| matches!(line, TelemetryLine::Event { event, .. } if event == "error")),
+        "merge without mergekit must fail closed"
+    );
 }

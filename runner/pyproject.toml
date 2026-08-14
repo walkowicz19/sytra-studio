@@ -2,7 +2,11 @@
 name = "sytra-runner"
 version = "1.2.0"
 requires-python = ">=3.10"
-dependencies = ["pyyaml>=6.0"]
+dependencies = [
+    "pyyaml>=6.0",
+    "huggingface-hub>=0.34",
+    "hf-xet>=1.1.5",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -13,3 +17,4 @@ include = ["sytra_runner*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

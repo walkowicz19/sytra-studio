@@ -41,7 +41,9 @@ function loadSavedCustomTheme(): CustomTheme {
   try {
     const raw = localStorage.getItem('sytra-custom-theme')
     if (raw) return { ...defaultCustomTheme, ...JSON.parse(raw) }
-  } catch {}
+  } catch (e) {
+    console.warn('Failed to parse saved custom theme', e)
+  }
   return defaultCustomTheme
 }
 
@@ -276,7 +278,7 @@ export function pushToast(kind: Toast['kind'], message: string, ms = 4000) {
 }
 
 // ─── Hardware ─────────────────────────────────────────────────────────────────
-export interface HwInfo { backend: string; vram_mb: number; ram_mb: number }
+export interface HwInfo { backend: string; vram_mb: number | null; ram_mb: number | null }
 export const hwStore = $state<{ info: HwInfo | null }>({ info: null })
 export function setHwInfo(info: HwInfo) { hwStore.info = info }
 

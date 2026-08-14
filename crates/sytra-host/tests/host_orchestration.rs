@@ -137,6 +137,11 @@ fn test_run_archive() {
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].op_id, op_id);
 
+    let summaries = archive.list_summaries().unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].op_id, op_id);
+    assert_eq!(summaries[0].kind, "train");
+
     archive.delete(op_id).unwrap();
     assert!(archive.load(op_id).is_err());
 

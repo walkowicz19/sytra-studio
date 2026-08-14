@@ -30,6 +30,7 @@ export interface ModelDownloadStatus {
   shard_index: number
   total_shards: number
   timestamp: number
+  error?: string | null
 }
 
 export interface LocalModelItem {
@@ -39,6 +40,13 @@ export interface LocalModelItem {
   path: string
   size_gb: number
   format: string
+}
+
+export interface MoeIndexResult {
+  runtime_manifest: string
+  experts_indexed: number
+  dense_bytes: number
+  forward_verified: boolean
 }
 
 export interface AdapterConfig {
@@ -148,13 +156,28 @@ export interface CompatResult {
 export interface DataPoint { step: number; value: number }
 
 /** Model catalog entry for the Model Hub download page */
+export interface ModelAlert {
+  level: 'info' | 'warning' | 'danger' | string
+  code: string
+  message: string
+  blocks_download: boolean
+}
+
 export interface CatalogEntry {
   id:          string   // HuggingFace repo ID
   name:        string   // Human-readable name
   size_gb:     number   // Approximate size in GB
-  format:      'gguf' | 'safetensors'
+  format:      string
   tags:        string[]
   recommended: boolean  // Recommended for this user's hardware
+  architecture?: string
+  license?: string
+  downloadable?: boolean
+  gated?: boolean
+  alert_level?: string
+  alerts?: ModelAlert[]
+  param_count?: number
+  moe_active_params?: number | null
 }
 
 export interface AppSettings {

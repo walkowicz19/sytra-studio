@@ -22,7 +22,7 @@ archive.
 | Tool | What it does |
 |---|---|
 | `get_status` | Hardware (backend/VRAM/RAM), whether an op is running |
-| `list_catalog` | Models `start_train` accepts (exact `model_id` match) |
+| `list_catalog` | Pinned Hugging Face `model_id`s Sytra can download (Xet). Each row includes risk `alerts`. `download_model` and `start_train` require an exact match. |
 | `guider_recommend` | Recipes (model+adapter+quant) that fit the hardware |
 | `preview_dataset` | First rows of an hf/local/synthetic/klayer source |
 | `start_train` | Start fine-tune (LoRA/QLoRA; sft/dpo/orpo/cpo), returns `op_id` |

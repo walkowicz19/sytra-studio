@@ -3,7 +3,6 @@ import sys
 import argparse
 import json
 import yaml
-import time
 from sytra_runner.telemetry import emit_metric, emit_event, emit_log
 
 def parse_args():
@@ -128,56 +127,37 @@ def main():
     except ImportError:
         pass
         
-    if huggingface_hub_installed and token:
-        try:
-            emit_log("Connecting to Hugging Face Hub...")
-            api = HfApi()
-            
-            # Create repository if it doesn't exist
-            emit_log(f"Ensuring repository '{repo_id}' exists...")
-            api.create_repo(
-                repo_id=repo_id,
-                private=is_private,
-                token=token,
-                exist_ok=True
-            )
-            
-            # Perform upload with custom progress reporting
-            emit_log("Uploading folder contents...")
-            
-            # We simulate progress indicator steps because upload_folder handles callbacks internally
-            for i in range(1, 10):
-                time.sleep(0.5)
-                emit_metric(step=i * 10, progress=i * 0.1)
-                
-            api.upload_folder(
-                folder_path=artifact_path,
-                repo_id=repo_id,
-                token=token
-            )
-            
-            emit_metric(step=100, progress=1.0)
-            target_url = f"https://huggingface.co/{repo_id}"
-            emit_log(f"Upload completed successfully. Available at: {target_url}")
-            emit_event("done", url=target_url)
-            
-        except Exception as e:
-            emit_log(f"HF Upload error: {e}")
-            emit_event("error", error=str(e))
-            sys.exit(1)
-    else:
-        # Simulated fallback upload (always runs if token or library is missing)
-        emit_log("Running in simulated HF upload mode (Hugging Face Hub library/token absent)...")
-        total_steps = 10
-        for step in range(1, total_steps + 1):
-            time.sleep(0.4)
-            progress = step / total_steps
-            emit_metric(step=step, progress=progress)
-            emit_log(f"Simulating file chunk upload progress: {progress * 100:.0f}%")
-            
+    if not huggingface_hub_installed:
+        emit_event("error", error="huggingface_hub is not installed; refusing to fake an upload")
+        sys.exit(1)
+    if not token:
+        emit_event("error", error="Hugging Face token is required; refusing to fake an upload")
+        sys.exit(1)
+
+    try:
+        emit_log("Connecting to Hugging Face Hub...")
+        api = HfApi()
+        emit_log(f"Ensuring repository '{repo_id}' exists...")
+        api.create_repo(
+            repo_id=repo_id,
+            private=is_private,
+            token=token,
+            exist_ok=True
+        )
+        emit_log("Uploading folder contents...")
+        api.upload_folder(
+            folder_path=artifact_path,
+            repo_id=repo_id,
+            token=token
+        )
+        emit_metric(step=100, progress=1.0)
         target_url = f"https://huggingface.co/{repo_id}"
-        emit_log(f"Simulated upload complete. Repo URL: {target_url}")
+        emit_log(f"Upload completed successfully. Available at: {target_url}")
         emit_event("done", url=target_url)
+    except Exception as e:
+        emit_log(f"HF Upload error: {e}")
+        emit_event("error", error=str(e))
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -62,13 +62,20 @@ impl EnvProvisioner {
             "install",
             "--python",
             &python_str,
-            "torch",
-            "transformers",
-            "trl",
-            // Old datasets releases break at import time against pyarrow
-            // >= 14 (PyExtensionType removed); pin a modern floor.
-            "datasets>=3.2",
-            "pyyaml",
+            // Keep the CUDA training stack reproducible. These versions are
+            // validated together on Windows with Qwen3.5 and bitsandbytes
+            // 4-bit loading; unpinned upgrades have broken model loading and
+            // TRL argument compatibility in the past.
+            "torch==2.10.0",
+            // Qwen3.5's qwen3_5 model type first became available in 5.2.
+            "transformers==5.2.0",
+            "unsloth==2026.7.2",
+            "peft==0.19.1",
+            "trl==0.24.0",
+            "bitsandbytes==0.49.2",
+            "datasets==4.3.0",
+            "accelerate==1.14.0",
+            "pyyaml==6.0.2",
         ])?;
 
         // Write marker file to indicate successful provisioning

@@ -1,14 +1,12 @@
-"""Headless merge entrypoint (Phase 1).
+"""Headless merge entrypoint.
 
-If mergekit is installed, configures and runs a real merge.
-Otherwise, falls back to a high-fidelity simulation so tests run successfully
-on CPU/non-accelerator environments.
+Runs a real mergekit merge. Missing mergekit or any merge failure is an
+error — never a simulated success.
 """
 from __future__ import annotations
 
 import os
 import sys
-import time
 import subprocess
 import traceback
 from typing import Any
@@ -480,49 +478,6 @@ def run_real_merge(config: MergeConfig, config_path: str) -> int:
     return 0
 
 
-def run_simulation(config: MergeConfig) -> int:
-    """Execute high-fidelity merge simulation for environments without mergekit."""
-    op_id = config.op_id or "00000000-0000-0000-0000-000000000000"
-    model_path = config.output.get("model_path", "./merged")
-
-    telemetry.emit_starting(op_id, {
-        "protocol_version": 1,
-        "op": "merge",
-        "method": config.merge_method,
-        "models": len(config.models),
-    })
-
-    stages = ["computing_task_vectors", "writing_shards"]
-    if config.merge_method == "moe":
-        stages = ["slicing_expert_layers", "initializing_gate_weights", "writing_shards"]
-        
-    try:
-        for i, stage in enumerate(stages):
-            telemetry.emit_event("stage", {"stage": stage})
-            for step in range(1, 4):
-                time.sleep(0.3)  # pause to simulate work
-                progress = ((i * 3) + step) / (len(stages) * 3)
-                telemetry.emit_metric(
-                    progress=round(progress, 2),
-                    stage=stage,
-                    mem_used_mb=4200 if config.merge_method == "moe" else 3500,
-                )
-        
-        # Simulate successful finish with correct architecture
-        arch = "MixtralForCausalLM" if config.merge_method == "moe" else "MistralForCausalLM"
-        param_count = 12840000000 if config.merge_method == "moe" else 7242000000
-        
-        telemetry.emit_done({
-            "model_path": str(model_path),
-            "param_count": param_count,
-            "architecture": arch,
-        })
-        return 0
-    except Exception as exc:
-        telemetry.emit_error(str(exc), traceback.format_exc())
-        return 1
-
-
 def run(config_path: str) -> int:
     """Merge dispatcher."""
     try:
@@ -531,14 +486,18 @@ def run(config_path: str) -> int:
         telemetry.emit_error(f"Failed to load merge config: {exc}", traceback.format_exc())
         return 1
 
-    # mergekit is importable in this interpreter or not — no shim probing.
-    if HAS_MERGEKIT:
-        try:
-            return run_real_merge(config, config_path)
-        except Exception:
-            return run_simulation(config)
-    else:
-        return run_simulation(config)
+    if not HAS_MERGEKIT:
+        telemetry.emit_error(
+            "mergekit is not installed in this Python environment. "
+            "Provision the merge env (.sytra-envs/merge-env) before starting a merge."
+        )
+        return 1
+
+    try:
+        return run_real_merge(config, config_path)
+    except Exception as exc:
+        telemetry.emit_error(f"Merge failed: {exc}", traceback.format_exc())
+        return 1
 
 
 def main() -> int:

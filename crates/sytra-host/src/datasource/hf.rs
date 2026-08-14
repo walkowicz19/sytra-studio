@@ -90,7 +90,7 @@ impl HfDataSource {
                 url = format!("{}&config={}", url, cfg);
             }
         }
-        println!("HF Query URL: {}", url);
+        eprintln!("HF Query URL: {}", url);
 
         let resp = client
             .get(&url)

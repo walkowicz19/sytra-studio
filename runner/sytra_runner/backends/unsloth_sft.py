@@ -9,10 +9,44 @@ import os
 import sys
 import time
 import traceback
+import importlib.metadata
 from typing import Any
 
 from .. import telemetry
 from ..config import RunConfig
+
+
+_ML_PACKAGES = (
+    "torch",
+    "transformers",
+    "unsloth",
+    "peft",
+    "trl",
+    "bitsandbytes",
+    "datasets",
+    "accelerate",
+)
+
+
+def _dependency_versions() -> dict[str, str]:
+    """Return the exact training stack for telemetry and run provenance."""
+    versions: dict[str, str] = {"python": sys.version.split()[0]}
+    for package in _ML_PACKAGES:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = "missing"
+    return versions
+
+
+def _matched_lora_modules(model: Any, targets: list[str]) -> list[str]:
+    """List exact module names selected by the requested LoRA suffixes."""
+    target_set = set(targets)
+    return sorted(
+        name
+        for name, _module in model.named_modules()
+        if name.rsplit(".", 1)[-1] in target_set
+    )
 
 
 def _to_prompt_completion(row: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
@@ -79,6 +113,7 @@ def run_real_training(config: RunConfig) -> int:
         "total_steps": max_steps,
         "train_mode": train_mode
     })
+    telemetry.emit_event("dependency_versions", _dependency_versions())
 
     class TelemetryCallback(TrainerCallback):
         """Custom transformers callback to pipe training progress to stdout telemetry."""
@@ -173,6 +208,37 @@ def run_real_training(config: RunConfig) -> int:
             load_in_4bit=load_in_4bit,
         )
 
+    if load_in_4bit:
+        is_4bit = bool(getattr(model, "is_loaded_in_4bit", False))
+        if not is_4bit:
+            raise RuntimeError(
+                "4-bit loading was requested, but the loaded model did not report "
+                "is_loaded_in_4bit=True; refusing a full-precision fallback"
+            )
+
+    target_modules = config.adapter.get(
+        "target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]
+    )
+    matched_modules = _matched_lora_modules(model, target_modules)
+    if not matched_modules:
+        raise RuntimeError(
+            f"No modules matched the requested LoRA targets: {target_modules}"
+        )
+    unexpected_vision = [
+        name for name in matched_modules
+        if any(part in name.lower() for part in ("vision", "visual"))
+    ]
+    if unexpected_vision:
+        raise RuntimeError(
+            "LoRA targets unexpectedly matched vision modules: "
+            + ", ".join(unexpected_vision)
+        )
+    telemetry.emit_event("lora_module_matches", {
+        "targets": target_modules,
+        "count": len(matched_modules),
+        "modules": matched_modules,
+    })
+
     # 2. Configure PEFT adapter — always use Unsloth's gradient checkpointing
     # ("unsloth" mode stores only 1/sqrt(n) activations, saving ~70% VRAM
     # compared to standard gradient checkpointing at the cost of one extra
@@ -180,7 +246,7 @@ def run_real_training(config: RunConfig) -> int:
     model = FastLanguageModel.get_peft_model(
         model,
         r=config.adapter.get("rank", 16),
-        target_modules=config.adapter.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
+        target_modules=target_modules,
         lora_alpha=config.adapter.get("alpha", 32),
         lora_dropout=config.adapter.get("dropout", 0.05),
         bias="none",
@@ -188,6 +254,14 @@ def run_real_training(config: RunConfig) -> int:
         random_state=3407,
         max_seq_length=max_seq_len,
     )
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    if trainable_params == 0:
+        raise RuntimeError("PEFT configured zero trainable parameters")
+    telemetry.emit_event("trainable_parameters", {
+        "trainable": trainable_params,
+        "total": total_params,
+    })
     telemetry.emit_event("stage", {"stage": "preparing_dataset"})
 
     # 3. Load canonical data. For SFT, keep prompt and completion separate so
@@ -335,64 +409,6 @@ def run_real_training(config: RunConfig) -> int:
     return 0
 
 
-def run_simulation(config: RunConfig) -> int:
-    """Execute high-fidelity preference-aware simulation for CPU/development environments."""
-    op_id = config.run_id or "00000000-0000-0000-0000-000000000000"
-    max_steps = config.train.get("max_steps") or 10
-    save_every = config.train.get("save_every") or max_steps
-    train_mode = getattr(config, "train_mode", "sft").lower()
-
-    telemetry.emit_starting(op_id, {
-        "protocol_version": 1,
-        "op": "train",
-        "backend": config.backend_kind,
-        "model": config.model,
-        "total_steps": max_steps,
-        "train_mode": train_mode
-    })
-
-    loss = 1.5
-    margin = 0.1
-    kl = 0.05
-    try:
-        for step in range(1, max_steps + 1):
-            time.sleep(0.01)  # small pause to simulate compute
-            loss = max(0.05, loss * 0.92)
-            margin = min(1.8, margin + 0.12 + (step * 0.005))
-            kl = max(0.01, kl * 0.95)
-            
-            # Emit preference metrics (margin, kl) only for DPO/ORPO/CPO modes
-            is_pref = train_mode in ("dpo", "orpo", "cpo")
-            
-            telemetry.emit_metric(
-                step=step,
-                progress=round(step / max_steps, 4),
-                loss=round(loss, 4),
-                lr=config.optim.get("learning_rate", 2e-4),
-                grad_norm=0.84,
-                tokens_s=1450,
-                mem_used_mb=4096,
-                reward_margin=round(margin, 4) if is_pref else None,
-                kl_divergence=round(kl, 4) if is_pref else None,
-            )
-            if step % save_every == 0:
-                adapter_path = config.output.get("adapter_path", "./output")
-                telemetry.emit_event("checkpoint", {
-                    "step": step,
-                    "path": f"{adapter_path}/checkpoint-{step}",
-                })
-    except Exception as exc:
-        telemetry.emit_error(str(exc), traceback.format_exc())
-        return 1
-
-    telemetry.emit_done({
-        "adapter_path": str(config.output.get("adapter_path")),
-        "final_loss": round(loss, 4),
-        "steps": max_steps,
-    })
-    return 0
-
-
 def train(config_path: str) -> int:
     """Train dispatcher."""
     try:
@@ -401,11 +417,6 @@ def train(config_path: str) -> int:
         telemetry.emit_error(f"Failed to load run config: {exc}", traceback.format_exc())
         return 1
 
-    # Check if ML dependencies are available locally without importing them
-    # globally. Catch ANY exception, not just ImportError: a broken or
-    # version-mismatched package (e.g. old datasets vs new pyarrow) raises
-    # AttributeError at import time, and that must degrade to simulation,
-    # not crash the run.
     has_ml_deps = False
     try:
         import unsloth  # noqa: F401  (must precede transformers to patch it)
@@ -414,16 +425,23 @@ def train(config_path: str) -> int:
         import trl
         import datasets
         has_ml_deps = True
-    except Exception:
-        pass
+    except Exception as exc:
+        telemetry.emit_error(
+            "CUDA training dependencies are unavailable or failed to import; "
+            "refusing to simulate a training run",
+            f"{exc!r} {_dependency_versions()}",
+        )
+        return 1
 
-    # Route based on available hardware and dependencies
     if has_ml_deps and torch.cuda.is_available() and config.backend_kind in ("auto", "cuda"):
         try:
             return run_real_training(config)
         except Exception as exc:
             telemetry.emit_error(f"Unsloth training failed: {exc}", traceback.format_exc())
             return 1
-    else:
-        # Silently fall back to simulation for CPU testing/validation
-        return run_simulation(config)
+
+    telemetry.emit_error(
+        "Training requires a working CUDA stack. CPU-only simulation is not supported.",
+        repr(_dependency_versions()),
+    )
+    return 1

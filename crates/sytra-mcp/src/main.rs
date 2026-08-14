@@ -10,6 +10,9 @@
 //! RunArchive, Guider, ResourceGuard, commands::start_op), so agent-driven
 //! runs land in the same archive and obey the same validation gates.
 
+mod definitions;
+mod protocol;
+
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -26,58 +29,48 @@ use sytra_contracts::{
 };
 use sytra_host::{
     commands, job_runner::JobRunner, materialize::materialize_dataset_for_config,
-    resource_guard::ResourceGuard, run_archive::RunArchive, BackendResolver,
+    resource_guard::ResourceGuard, run_archive::RunArchive, BackendResolver, DownloadService,
+    EnvProvisioner, plan_inference, resolve_workspace,
 };
 
-const PROTOCOL_VERSION: &str = "2025-06-18";
+use crate::definitions::tool_definitions;
+use crate::protocol::{respond, respond_error, PROTOCOL_VERSION};
 
 struct Server {
     workspace: PathBuf,
     runner: JobRunner,
     archive: RunArchive,
     guider: Guider,
+    downloads: DownloadService,
     rt: tokio::runtime::Runtime,
     current_op: Mutex<Option<Uuid>>,
 }
 
-fn find_project_root() -> Option<PathBuf> {
-    if let Ok(mut dir) = std::env::current_exe() {
-        while dir.pop() {
-            if dir.join("runner").join("sytra_runner").exists() {
-                return Some(dir);
-            }
-        }
-    }
-    None
-}
-
 impl Server {
-    fn operation_guard(&self) -> ResourceGuard {
-        let detected_ram = BackendResolver::detect_system_ram_mb();
+    fn operation_guard(&self) -> Result<ResourceGuard, String> {
+        let detected_ram = BackendResolver::detect_system_ram_mb().ok_or_else(|| {
+            "Could not detect system RAM; refusing to estimate".to_string()
+        })?;
         let ram_limit = sytra_host::settings::AppSettings::load(&self.workspace)
             .effective_main_memory_mb(detected_ram);
-        ResourceGuard::new(
-            BackendResolver::detect_system_vram_mb(),
+        Ok(ResourceGuard::new(
+            BackendResolver::detect_system_vram_mb().unwrap_or(0),
             ram_limit,
             500 * 1024,
-        )
+        ))
     }
 
     fn new() -> Self {
-        let workspace = std::env::var("SYTRA_WORKSPACE")
-            .map(PathBuf::from)
-            .ok()
-            .or_else(find_project_root)
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let workspace = resolve_workspace();
 
         let runs_dir = workspace.join("runs");
         std::fs::create_dir_all(&runs_dir).ok();
 
         Self {
             runner: JobRunner::new(&workspace),
-            // Same construction as the GUI so both see the same records.
             archive: RunArchive::new(&runs_dir),
             guider: Guider::new(),
+            downloads: DownloadService::new(&workspace),
             rt: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -154,7 +147,31 @@ impl Server {
     }
 
     fn tool_list_catalog(&self) -> Result<Value, String> {
-        serde_json::to_value(self.guider.catalog()).map_err(|e| e.to_string())
+        let vram = BackendResolver::detect_system_vram_mb();
+        let ram = BackendResolver::detect_system_ram_mb();
+        let items: Vec<Value> = self
+            .guider
+            .catalog()
+            .iter()
+            .map(|entry| {
+                let alerts = sytra_contracts::alerts_for(entry, vram, ram);
+                let level = sytra_contracts::peak_alert_level(&alerts);
+                let mut value = serde_json::to_value(entry).unwrap_or(Value::Null);
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("alerts".into(), serde_json::to_value(&alerts).unwrap_or(Value::Null));
+                    obj.insert("alert_level".into(), json!(level));
+                    obj.insert("format".into(), json!(entry.inferred_format()));
+                    obj.insert("download_size_gb".into(), json!(entry.download_size_gb()));
+                    obj.insert("allows_download".into(), json!(entry.allows_download()));
+                }
+                value
+            })
+            .collect();
+        Ok(json!({
+            "count": items.len(),
+            "download_policy": "Downloads are limited to these exact Hugging Face model_id values. Sytra uses the verified Xet/hf-xet downloader. Read alerts before starting a pull.",
+            "models": items,
+        }))
     }
 
     fn tool_guider_recommend(&self, args: &Value) -> Result<Value, String> {
@@ -167,11 +184,13 @@ impl Server {
             total_vram_mb: args
                 .get("vram_mb")
                 .and_then(|v| v.as_u64())
-                .unwrap_or_else(BackendResolver::detect_system_vram_mb),
+                .or_else(BackendResolver::detect_system_vram_mb)
+                .ok_or_else(|| "Could not detect VRAM; pass vram_mb".to_string())?,
             total_ram_mb: args
                 .get("ram_mb")
                 .and_then(|v| v.as_u64())
-                .unwrap_or_else(BackendResolver::detect_system_ram_mb),
+                .or_else(BackendResolver::detect_system_ram_mb)
+                .ok_or_else(|| "Could not detect RAM; pass ram_mb".to_string())?,
         };
         serde_json::to_value(self.guider.recommend(&hw)).map_err(|e| e.to_string())
     }
@@ -189,38 +208,16 @@ impl Server {
     }
 
     fn tool_list_runs(&self) -> Result<Value, String> {
-        let records = self.archive.list().map_err(|e| e.to_string())?;
-        let compact: Vec<Value> = records
-            .iter()
-            .map(|r| {
-                json!({
-                    "op_id": r.op_id.to_string(),
-                    "kind": r.kind,
-                    "status": r.status,
-                    "artifact_path": r.artifact_path.display().to_string(),
-                })
-            })
-            .collect();
-        Ok(Value::Array(compact))
+        let records = self.archive.list_summaries().map_err(|e| e.to_string())?;
+        serde_json::to_value(records).map_err(|e| e.to_string())
     }
 
     fn tool_get_run(&self, args: &Value) -> Result<Value, String> {
         let op_id = parse_op_id(args)?;
         let tail = args.get("tail").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
         let record = self.archive.load(op_id).map_err(|e| e.to_string())?;
-
         let transcript_path = self.transcripts_dir().join(format!("{op_id}.jsonl"));
-        let tail_lines: Vec<Value> = std::fs::read_to_string(&transcript_path)
-            .map(|content| {
-                let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-                lines
-                    .iter()
-                    .skip(lines.len().saturating_sub(tail))
-                    .filter_map(|l| serde_json::from_str(l).ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-
+        let tail_lines = sytra_host::transcript::tail_jsonl(&transcript_path, tail);
         Ok(json!({
             "op_id": record.op_id.to_string(),
             "kind": record.kind,
@@ -286,7 +283,7 @@ impl Server {
             config: run_config,
             config_path,
         });
-        let guard = self.operation_guard();
+        let guard = self.operation_guard()?;
         let (op_id, rx) =
             commands::start_op(op, &self.runner, &self.archive, &guard, &self.guider)?;
         self.spawn_drain(op_id, rx);
@@ -351,7 +348,7 @@ impl Server {
             config: merge_config,
             config_path,
         });
-        let guard = self.operation_guard();
+        let guard = self.operation_guard()?;
         let (op_id, rx) =
             commands::start_op(op, &self.runner, &self.archive, &guard, &self.guider)?;
         self.spawn_drain(op_id, rx);
@@ -423,13 +420,16 @@ impl Server {
 
     fn tool_get_settings(&self) -> Result<Value, String> {
         let settings = sytra_host::settings::AppSettings::load(&self.workspace);
-        let detected_ram_mb = BackendResolver::detect_system_ram_mb();
+        let detected_ram_mb = BackendResolver::detect_system_ram_mb().ok_or_else(|| {
+            "Could not detect system RAM".to_string()
+        })?;
         Ok(json!({
             "hf_cache_dir": settings.effective_hf_cache(&self.workspace).display().to_string(),
             "is_custom": settings.hf_cache_dir.is_some(),
             "main_memory_limit_mb": settings.main_memory_limit_mb,
             "effective_main_memory_mb": settings.effective_main_memory_mb(detected_ram_mb),
             "detected_ram_mb": detected_ram_mb,
+            "memory_limit_note": "main_memory_limit_mb gates preflight estimates only; it does not cap process RSS. Prefer one shared MCP config and launch sytra-mcp directly instead of npx.",
         }))
     }
 
@@ -452,7 +452,9 @@ impl Server {
 
     fn tool_set_main_memory_limit(&self, args: &Value) -> Result<Value, String> {
         let limit_mb = args.get("limit_mb").and_then(|v| v.as_u64());
-        let detected_ram_mb = BackendResolver::detect_system_ram_mb();
+        let detected_ram_mb = BackendResolver::detect_system_ram_mb().ok_or_else(|| {
+            "Could not detect system RAM".to_string()
+        })?;
         if let Some(limit) = limit_mb {
             if limit < 2048 || limit > detected_ram_mb {
                 return Err(format!(
@@ -482,7 +484,9 @@ impl Server {
         // Detect effective RAM to decide whether to use disk-backed temp files during
         // GGUF conversion. On machines with <= 20 GB RAM a 7B model at Q8_0 pushes the
         // converter past the physical memory limit and triggers an OOM kill.
-        let detected_ram_mb = BackendResolver::detect_system_ram_mb();
+        let detected_ram_mb = BackendResolver::detect_system_ram_mb().ok_or_else(|| {
+            "Could not detect system RAM".to_string()
+        })?;
         let settings = sytra_host::settings::AppSettings::load(ws);
         let effective_ram_mb = settings.effective_main_memory_mb(detected_ram_mb);
         let low_ram = effective_ram_mb <= 20_480;
@@ -491,16 +495,9 @@ impl Server {
             .join(".tools")
             .join("llama.cpp")
             .join("convert_hf_to_gguf.py");
-        let merge_py = ws
-            .join(".sytra-envs")
-            .join("merge-env")
-            .join("Scripts")
-            .join("python.exe");
-        let train_py = ws
-            .join(".sytra-envs")
-            .join("train-env")
-            .join("Scripts")
-            .join("python.exe");
+        let envs = EnvProvisioner::new(ws);
+        let merge_py = envs.merge_python_path();
+        let train_py = envs.train_python_path();
         let ollama_ok = std::process::Command::new("ollama")
             .arg("--version")
             .stdout(std::process::Stdio::null())
@@ -569,7 +566,7 @@ impl Server {
             "steps": steps,
             "gotchas": [
                 "NEVER `ollama create` directly from a safetensors directory — use the llama.cpp converter first.",
-                "Novel MoE architectures like Kimi 2.7 Coder (kimi_k25 with 384 experts) are not natively supported by Ollama's internal GGUF importer — use LM Studio or Sytra Studio's GPU Expert Pager instead.",
+                "Novel MoE architectures are backend-specific. Use Sytra's verified llama.cpp/vLLM preflight and do not assume an unsupported model can be paged from disk.",
                 "Train runs produce an adapter; merge it into the base model before converting.",
                 "The Modelfile must carry the model's chat TEMPLATE and stop tokens or output will be unusable.",
                 "`ollama run` hangs when spawned without a terminal (TTY detection). To smoke-test programmatically, POST to http://127.0.0.1:11434/api/generate with {\"model\": ..., \"prompt\": ..., \"stream\": false} instead.",
@@ -579,8 +576,14 @@ impl Server {
     }
 
     fn tool_configure_fast_cache(&self, args: &Value) -> Result<Value, String> {
-        let tokenless = args.get("tokenless").and_then(|v| v.as_bool()).unwrap_or(true);
-        let low_bit_mode = args.get("low_bit_mode").and_then(|v| v.as_u64()).map(|v| v as u8);
+        let tokenless = args
+            .get("tokenless")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let low_bit_mode = args
+            .get("low_bit_mode")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u8);
         let vram_expert_cache_mb = args.get("vram_expert_cache_mb").and_then(|v| v.as_u64());
 
         let mut settings = sytra_host::settings::AppSettings::load(&self.workspace);
@@ -597,77 +600,64 @@ impl Server {
             "tokenless_download": settings.tokenless_download,
             "low_bit_mode": settings.low_bit_mode,
             "vram_expert_cache_mb": settings.vram_expert_cache_mb,
-            "message": "Fast tokenless cache and GPU low-bit settings updated."
+            "message": "Verified download authentication and low-bit settings updated."
         }))
     }
 
     fn tool_download_model(&self, args: &Value) -> Result<Value, String> {
-        let model = args.get("model")
+        let model = args
+            .get("model")
             .and_then(|v| v.as_str())
             .ok_or("missing 'model' parameter")?;
-        let dest_dir = args.get("dest_dir")
-            .and_then(|v| v.as_str());
-        let purpose = args.get("purpose")
+        let entry = sytra_host::catalog::require_catalog_download(&self.guider, model)?;
+        let vram = BackendResolver::detect_system_vram_mb();
+        let ram = BackendResolver::detect_system_ram_mb();
+        let alerts = sytra_contracts::alerts_for(entry, vram, ram);
+        if let Some(blocked) = alerts.iter().find(|a| a.blocks_download) {
+            return Err(format!("{} ({})", blocked.message, blocked.code));
+        }
+        let dest_dir = args.get("dest_dir").and_then(|v| v.as_str());
+        let purpose = args
+            .get("purpose")
             .and_then(|v| v.as_str())
             .unwrap_or("inference");
-        let export_target = if purpose == "inference" { "LM Studio & Ollama" } else { "Sytra Workspace" };
-        let home_path = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok().map(PathBuf::from);
-        let default_target = home_path
-            .map(|h| h.join("lm-studio models"))
-            .unwrap_or_else(|| PathBuf::from("./lm-studio models"));
-        let target_path = dest_dir.map(PathBuf::from).unwrap_or(default_target);
-        let status_file = target_path.join(".download_status.json");
-
-        // If download_status.json exists and belongs to this repo, return status summary
-        if status_file.exists() {
-            if let Ok(content) = std::fs::read_to_string(&status_file) {
-                if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                    if parsed.get("repo_id").and_then(|v| v.as_str()) == Some(model) {
-                        return Ok(json!({
-                            "model": model,
-                            "dest_dir": target_path.to_string_lossy(),
-                            "purpose": purpose,
-                            "export_target": export_target,
-                            "format": if purpose == "inference" { "GGUF" } else { "safetensors" },
-                            "download_status": parsed,
-                            "message": format!(
-                                "Model download status for {model}: {}% completed ({}/{} GB), speed: {} MB/s, ETA: {}, shard: {}/{}",
-                                parsed.get("pct").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                parsed.get("downloaded_gb").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                parsed.get("total_gb").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                parsed.get("speed_mbps").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                                parsed.get("eta_formatted").and_then(|v| v.as_str()).unwrap_or("calculating..."),
-                                parsed.get("shard_index").and_then(|v| v.as_u64()).unwrap_or(1),
-                                parsed.get("total_shards").and_then(|v| v.as_u64()).unwrap_or(1),
-                            )
-                        }));
-                    }
-                }
-            }
+        let quant = args.get("quant").and_then(|v| v.as_str());
+        let revision = args.get("revision").and_then(|v| v.as_str());
+        let started = self
+            .downloads
+            .start(model, purpose, dest_dir, quant, revision)?;
+        let mut payload = serde_json::to_value(started).map_err(|e| e.to_string())?;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("alerts".into(), serde_json::to_value(&alerts).unwrap_or(Value::Null));
+            obj.insert("alert_level".into(), json!(sytra_contracts::peak_alert_level(&alerts)));
+            obj.insert("architecture".into(), json!(entry.architecture));
+            obj.insert("license".into(), json!(entry.license));
         }
+        Ok(payload)
+    }
 
-        let py_script = self.workspace.join("runner").join("scripts").join("download_gguf_model.py");
-        let mut cmd = std::process::Command::new("python");
-        cmd.arg(&py_script).arg("--model").arg(model);
-        if let Some(dest) = dest_dir {
-            if !dest.trim().is_empty() {
-                cmd.arg("--dest").arg(dest);
-            }
+    fn tool_plan_inference(&self, args: &Value) -> Result<Value, String> {
+        let model_path = args
+            .get("model_path")
+            .and_then(|v| v.as_str())
+            .ok_or("missing 'model_path'")?;
+        let context = args.get("context").and_then(|v| v.as_u64()).map(|v| v as usize);
+        let export = args
+            .get("export_runtimes")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let guard = self.operation_guard()?;
+        if guard.total_vram_mb == 0 || guard.total_ram_mb == 0 {
+            return Err("Hardware memory could not be detected; refusing to plan inference".into());
         }
-        cmd.current_dir(&self.workspace);
-
-        let status = cmd.status()
-            .map_err(|e| format!("Failed to launch download script: {e}"))?;
-
-        Ok(json!({
-            "model": model,
-            "dest_dir": target_path.to_string_lossy(),
-            "purpose": purpose,
-            "export_target": export_target,
-            "format": if purpose == "inference" { "GGUF" } else { "safetensors" },
-            "status": if status.success() { "completed" } else { "error" },
-            "message": format!("Sytra Studio launched downloading {model} into {}.", target_path.display())
-        }))
+        plan_inference(
+            &self.workspace,
+            model_path,
+            guard.total_vram_mb,
+            Some(guard.total_ram_mb),
+            context,
+            export,
+        )
     }
 
     fn call_tool(&self, name: &str, args: &Value) -> Result<Value, String> {
@@ -688,6 +678,7 @@ impl Server {
             "stop_op" => self.tool_stop_op(args),
             "preview_dataset" => self.tool_preview_dataset(args),
             "export_guide" => self.tool_export_guide(args),
+            "plan_inference" => self.tool_plan_inference(args),
             other => Err(format!("unknown tool: {other}")),
         }
     }
@@ -716,195 +707,6 @@ fn deep_merge(base: &mut Value, patch: &Value) {
         }
         (slot, v) => *slot = v.clone(),
     }
-}
-
-fn tool_definitions() -> Value {
-    json!([
-        {
-            "name": "get_status",
-            "description": "Current Sytra Studio state: whether an operation is running, detected backend (cuda/mps/cpu), VRAM/RAM, and the workspace path.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        },
-        {
-            "name": "get_settings",
-            "description": "Current app settings: where Hugging Face models/datasets are cached (hf_cache_dir) and whether it is a custom location.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        },
-        {
-            "name": "set_cache_dir",
-            "description": "Set where models and datasets are downloaded/cached (HF_HOME) — e.g. point it at a big HDD instead of a small system SSD. Pass path=null to reset to the workspace default. Applies to the next started operation; existing cached files are not moved.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": ["string", "null"], "description": "Absolute directory path, or null to reset to default" }
-                },
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "set_main_memory_limit",
-            "description": "Choose the maximum system RAM Sytra may budget during preflight checks. Pass limit_mb=null to use all detected RAM. Applies to the next operation.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "limit_mb": { "type": ["integer", "null"], "minimum": 2048, "description": "RAM ceiling in MB, or null for automatic" }
-                },
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "configure_fast_cache",
-            "description": "Configure zero-token fast HF downloading, zero-RAM mmap loading, low-bit precision (1, 2, 4 bits), and GPU VRAM expert caching.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "tokenless": { "type": "boolean", "description": "Bypass HF token prompts for open weights models" },
-                    "low_bit_mode": { "type": ["integer", "null"], "description": "Quantization bit mode (1, 2, 4 bits)" },
-                    "vram_expert_cache_mb": { "type": ["integer", "null"], "description": "Allocated VRAM limit in MB for GPU expert caching" }
-                },
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "download_model",
-            "description": "Autonomously fetch, cache, and export open models (e.g. Kimi 2.7 Coder) for Ollama / LM Studio directly inside Sytra.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "model": { "type": "string", "description": "Hugging Face model repository ID (e.g. moonshotai/Kimi-K2.7-Code)" },
-                    "export_target": { "type": "string", "description": "Downstream target: ollama | lm-studio | both (default: ollama)" }
-                },
-                "required": ["model"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "list_catalog",
-            "description": "List the model catalog. start_train only accepts models from this catalog (exact model_id match), so check here first.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        },
-        {
-            "name": "guider_recommend",
-            "description": "Get hardware-aware training recipes (model + adapter + quantization) that fit the given or detected VRAM/RAM.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "accelerator": { "type": "string", "description": "cuda | mps | cpu | rocm (default: cuda)" },
-                    "vram_mb": { "type": "integer", "description": "Override detected VRAM in MB" },
-                    "ram_mb": { "type": "integer", "description": "Override detected RAM in MB" }
-                },
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "merge_check",
-            "description": "Check compatibility of 2-3 models for a merge method before starting. Returns verdict green/amber/red with a reason. IMPORTANT: task-vector methods (ties/dare_ties/task_arithmetic) only work with true FINE-TUNES of the base model (weight delta ~1-2%); continued-pretrained lineages (e.g. a -Coder or -Math variant vs its plain base) are NOT fine-tunes and will produce a broken model — use slerp for those. Pass base_model to enable the lineage check.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "models": { "type": "array", "items": { "type": "string" }, "description": "Model ids to merge (2-3)" },
-                    "method": { "type": "string", "description": "linear | slerp | ties | dare_ties | task_arithmetic | passthrough | moe" },
-                    "base_model": { "type": "string", "description": "Base model for task-vector methods — enables the lineage-mismatch check" }
-                },
-                "required": ["models", "method"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "list_runs",
-            "description": "List all archived operations (train and merge) with op_id, kind, status (running/done/error/stopped) and artifact path.",
-            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        },
-        {
-            "name": "get_run",
-            "description": "Get one operation's status plus the last N telemetry lines (loss/progress metrics, stage events, logs). Poll this to follow a running operation.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "op_id": { "type": "string" },
-                    "tail": { "type": "integer", "description": "How many trailing telemetry lines to return (default 20)" }
-                },
-                "required": ["op_id"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "start_train",
-            "description": "Start a fine-tuning run (LoRA/QLoRA/DoRA; sft/dpo/orpo/cpo). Returns op_id immediately — poll get_run for progress. Only one operation runs at a time. `config` follows the run.yaml contract; unspecified fields get sensible defaults. Minimum: {\"model\": \"<catalog model_id>\", \"data\": {\"source\": \"local\", \"local\": {\"path\": \"data.jsonl\", \"format\": \"jsonl\", \"mapping\": {\"prompt\": \"prompt\", \"completion\": \"completion\"}}}}. Data sources: hf {repo_id, split}, local {path, format, mapping}, synthetic {generator_model, judge_model, mode, count, topic}, klayer {query, min_trust_tier, snapshot}. The output is a LoRA ADAPTER, not a full model — call export_guide for how to merge it and run it in Ollama.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "config": {
-                        "type": "object",
-                        "description": "run.yaml-shaped config. Required: model, data. Optional: train_mode, adapter{type,rank,alpha,dropout,quant_bits}, optim{learning_rate,schedule,warmup_steps}, train{max_steps,batch_size,max_seq_len,save_every}, output{adapter_path}."
-                    }
-                },
-                "required": ["config"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "start_merge",
-            "description": "Start a model merge (weight arithmetic, CPU-friendly, no dataset). Returns op_id immediately — poll get_run for progress. `config` follows the merge.yaml contract. Minimum: {\"merge_method\": \"dare_ties\", \"base_model\": \"<id>\", \"models\": [\"org/model-a\", \"org/model-b\"]}. models entries may be plain id strings or {model, parameters:{weight,density}}. Method-global parameters go in config.parameters (e.g. slerp needs {\"parameters\": {\"t\": 0.35}}). base_model is required for ties/dare_ties/task_arithmetic — and those methods ONLY work with true fine-tunes of that base: merging a continued-pretrained lineage (-Coder/-Math/-VL variants vs a plain base) produces a broken model; use slerp for related-but-divergent models. The runner verifies this with a weight-delta preflight and aborts lineage mismatches. Compatibility is checked server-side; a red verdict refuses to start. To run the merged model in Ollama afterwards, call export_guide.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "config": {
-                        "type": "object",
-                        "description": "merge.yaml-shaped config. Required: merge_method, models. Optional: base_model, dtype, tokenizer{source}, output{model_path}."
-                    }
-                },
-                "required": ["config"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "stop_op",
-            "description": "Cancel the running operation (kills the whole process tree). Idempotent. Omit op_id to stop the operation started by this session.",
-            "inputSchema": {
-                "type": "object",
-                "properties": { "op_id": { "type": "string" } },
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "preview_dataset",
-            "description": "Preview the first rows of a dataset source (canonical prompt/completion form) without materializing it for training.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "source": { "type": "object", "description": "A data spec: {source: hf|local|synthetic|klayer, <source>: {...}}" },
-                    "rows": { "type": "integer", "description": "Rows to preview (default 5)" }
-                },
-                "required": ["source"],
-                "additionalProperties": false
-            }
-        },
-        {
-            "name": "export_guide",
-            "description": "How to export a finished run so it works in Ollama/llama.cpp — returns requirement checks (converter, python envs, ollama on PATH, disk), the exact commands for this workspace, and the known failure modes. Key rules baked in: convert with the bundled llama.cpp converter (never import safetensors straight into Ollama — silently broken for some architectures), merge train-run adapters into their base model first, and always give the Modelfile the chat TEMPLATE + stop tokens.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "artifact_path": { "type": "string", "description": "The run's artifact path (from list_runs/get_run) — commands are rendered with it" },
-                    "kind": { "type": "string", "description": "train | merge — train adds the adapter-merge step (default merge)" }
-                },
-                "additionalProperties": false
-            }
-        }
-    ])
-}
-
-fn respond(id: &Value, result: Value) {
-    let msg = json!({ "jsonrpc": "2.0", "id": id, "result": result });
-    println!("{msg}");
-    let _ = std::io::stdout().flush();
-}
-
-fn respond_error(id: &Value, code: i64, message: &str) {
-    let msg = json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } });
-    println!("{msg}");
-    let _ = std::io::stdout().flush();
 }
 
 fn main() {
@@ -953,7 +755,7 @@ fn main() {
                 let args = msg.pointer("/params/arguments").unwrap_or(&empty);
                 match server.call_tool(name, args) {
                     Ok(result) => {
-                        let text = serde_json::to_string_pretty(&result)
+                        let text = serde_json::to_string(&result)
                             .unwrap_or_else(|_| result.to_string());
                         respond(
                             &id,
@@ -984,6 +786,9 @@ fn main() {
     // a no-op when the operation already finished.)
     let orphan = *server.current_op.lock().unwrap();
     if let Some(op_id) = orphan {
-        let _ = commands::stop_op(op_id, &server.runner, &server.archive);
+        if let Err(err) = commands::stop_op(op_id, &server.runner, &server.archive) {
+            eprintln!("failed to stop orphaned op: {err}");
+        }
     }
+    server.downloads.shutdown();
 }

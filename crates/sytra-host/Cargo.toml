@@ -3,6 +3,10 @@ name = "sytra-host"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["local-datasets"]
+local-datasets = ["dep:polars"]
+
 [dependencies]
 sytra-contracts = { path = "../sytra-contracts" }
 serde.workspace = true
@@ -13,7 +17,7 @@ async-trait = "0.1"
 sha2 = "0.10"
 uuid.workspace = true
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
-polars.workspace = true
+polars = { workspace = true, optional = true }
 reqwest.workspace = true
 
 

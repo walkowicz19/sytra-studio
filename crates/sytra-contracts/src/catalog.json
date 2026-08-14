@@ -1,7 +1,7 @@
 [
  {
   "model_id": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
-  "name": "Llama 3 8B Instruct (4-bit)",
+  "name": "Llama 3 8B Instruct (MLX 4-bit)",
   "param_count": 8030000000,
   "architecture": "LlamaForCausalLM",
   "dtype": "float16",
@@ -17,9 +17,18 @@
   "use_case_tags": [
    "chat",
    "general",
-   "instruction-following"
+   "instruction-following",
+   "mlx"
   ],
-  "benchmark_hint": "high"
+  "benchmark_hint": "high",
+  "format": "mlx",
+  "downloadable": false,
+  "workflows": [],
+  "gated": true,
+  "approx_download_gb": 4.5,
+  "explicit_risks": [
+   "Apple MLX package \u2014 not for Windows CUDA or llama.cpp."
+  ]
  },
  {
   "model_id": "mistralai/Mistral-7B-v0.1",
@@ -41,9 +50,20 @@
   "tokenizer_id": "mistralai/Mistral-7B-v0.1",
   "use_case_tags": [
    "general",
-   "completion"
+   "completion",
+   "fine-tuning"
   ],
-  "benchmark_hint": "medium"
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 14.5,
+  "explicit_risks": []
  },
  {
   "model_id": "org/knowledge-ft",
@@ -63,7 +83,15 @@
   "use_case_tags": [
    "knowledge"
   ],
-  "benchmark_hint": "medium"
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": false,
+  "workflows": [
+   "merge"
+  ],
+  "gated": false,
+  "approx_download_gb": null,
+  "explicit_risks": []
  },
  {
   "model_id": "org/toolcalling-ft",
@@ -83,7 +111,15 @@
   "use_case_tags": [
    "tool-use"
   ],
-  "benchmark_hint": "medium"
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": false,
+  "workflows": [
+   "merge"
+  ],
+  "gated": false,
+  "approx_download_gb": null,
+  "explicit_risks": []
  },
  {
   "model_id": "org/behavior-ft",
@@ -103,7 +139,15 @@
   "use_case_tags": [
    "chat"
   ],
-  "benchmark_hint": "medium"
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": false,
+  "workflows": [
+   "merge"
+  ],
+  "gated": false,
+  "approx_download_gb": null,
+  "explicit_risks": []
  },
  {
   "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
@@ -126,9 +170,20 @@
   "use_case_tags": [
    "code",
    "frontend",
-   "instruction-following"
+   "instruction-following",
+   "fine-tuning"
   ],
-  "benchmark_hint": "high"
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 15.2,
+  "explicit_risks": []
  },
  {
   "model_id": "Qwen/Qwen2.5-7B-Instruct",
@@ -151,8 +206,4100 @@
   "use_case_tags": [
    "chat",
    "general",
-   "instruction-following"
+   "instruction-following",
+   "fine-tuning"
   ],
-  "benchmark_hint": "high"
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 15.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3.5-9B-Base",
+  "name": "Qwen3.5 9B Base",
+  "param_count": 10000000000,
+  "architecture": "Qwen3_5ForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3.5-9B-Base",
+  "use_case_tags": [
+   "base",
+   "code",
+   "fine-tuning",
+   "multimodal"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": [
+   "Never treat as Qwen2. Vision tensors must not receive text LoRA."
+  ]
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "name": "Qwen2.5 0.5B Instruct",
+  "param_count": 494000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "instruction-following",
+   "fine-tuning",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-1.5B-Instruct",
+  "name": "Qwen2.5 1.5B Instruct",
+  "param_count": 1540000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-1.5B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "instruction-following",
+   "fine-tuning",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 3.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-3B-Instruct",
+  "name": "Qwen2.5 3B Instruct",
+  "param_count": 3090000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-3B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "instruction-following",
+   "fine-tuning",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 6.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-14B-Instruct",
+  "name": "Qwen2.5 14B Instruct",
+  "param_count": 14770000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-14B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "instruction-following",
+   "fine-tuning",
+   "large"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 29.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-7B",
+  "name": "Qwen2.5 7B Base",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-7B",
+  "use_case_tags": [
+   "base",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 15.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+  "name": "Qwen2.5 0.5B Instruct GGUF",
+  "param_count": 494000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-0.5B-Instruct",
+  "use_case_tags": [
+   "small",
+   "fast",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.47,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+  "name": "Qwen2.5 1.5B Instruct GGUF",
+  "param_count": 1540000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-1.5B-Instruct",
+  "use_case_tags": [
+   "small",
+   "fast",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-3B-Instruct-GGUF",
+  "name": "Qwen2.5 3B Instruct GGUF",
+  "param_count": 3090000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-3B-Instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+  "name": "Qwen2.5 7B Instruct GGUF",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-7B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-14B-Instruct-GGUF",
+  "name": "Qwen2.5 14B Instruct GGUF",
+  "param_count": 14770000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-14B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-32B-Instruct-GGUF",
+  "name": "Qwen2.5 32B Instruct GGUF",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-32B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-72B-Instruct-GGUF",
+  "name": "Qwen2.5 72B Instruct GGUF",
+  "param_count": 72700000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-72B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 43.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+  "name": "Qwen2.5 Coder 1.5B GGUF",
+  "param_count": 1540000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+  "use_case_tags": [
+   "code",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+  "name": "Qwen2.5 Coder 7B GGUF",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "use_case_tags": [
+   "code"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-14B-Instruct-GGUF",
+  "name": "Qwen2.5 Coder 14B GGUF",
+  "param_count": 14770000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-14B-Instruct",
+  "use_case_tags": [
+   "code"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Math-7B-Instruct-GGUF",
+  "name": "Qwen2.5 Math 7B GGUF",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Math-7B-Instruct",
+  "use_case_tags": [
+   "math"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "allenai/OLMoE-1B-7B-0125-Instruct-GGUF",
+  "name": "OLMoE 1B-active 7B Instruct GGUF",
+  "param_count": 6900000000,
+  "architecture": "OlmoeForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 1300000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "allenai/OLMoE-1B-7B-0125-Instruct",
+  "use_case_tags": [
+   "moe",
+   "chat",
+   "instruct"
+  ],
+  "benchmark_hint": "high",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.21,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen1.5-MoE-A2.7B-Chat-GGUF",
+  "name": "Qwen1.5 MoE A2.7B Chat GGUF",
+  "param_count": 14300000000,
+  "architecture": "Qwen2MoeForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 2700000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen1.5-MoE-A2.7B-Chat",
+  "use_case_tags": [
+   "moe",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 8.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Qwen2-57B-A14B-Instruct-GGUF",
+  "name": "Qwen2 57B-A14B Instruct GGUF",
+  "param_count": 57000000000,
+  "architecture": "Qwen2MoeForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 14000000000,
+  "license": "tongyi-qianwen",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Qwen2-57B-A14B-Instruct",
+  "use_case_tags": [
+   "moe",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 32.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-135M-Instruct-GGUF",
+  "name": "SmolLM2 135M Instruct",
+  "param_count": 135000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "use_case_tags": [
+   "small",
+   "edge"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.09,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-360M-Instruct-GGUF",
+  "name": "SmolLM2 360M Instruct",
+  "param_count": 360000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "use_case_tags": [
+   "small",
+   "edge"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.22,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
+  "name": "SmolLM2 1.7B Instruct",
+  "param_count": 1700000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+  "use_case_tags": [
+   "small",
+   "fast"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/Phi-3-mini-4k-instruct-gguf",
+  "name": "Phi-3 Mini 4k Instruct GGUF",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "microsoft/Phi-3-mini-4k-instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.3,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/phi-4-gguf",
+  "name": "Phi-4 14B Instruct GGUF",
+  "param_count": 14700000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "microsoft/phi-4",
+  "use_case_tags": [
+   "reasoning",
+   "math"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+  "name": "Llama 3.2 1B Instruct GGUF",
+  "param_count": 1240000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Llama-3.2-1B-Instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 0.8,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+  "name": "Llama 3.2 3B Instruct GGUF",
+  "param_count": 3210000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Llama-3.2-3B-Instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 2.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+  "name": "Llama 3.1 8B Instruct GGUF",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Meta-Llama-3.1-8B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
+  "name": "Mistral 7B Instruct v0.3 GGUF",
+  "param_count": 7250000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Mistral-7B-Instruct-v0.3",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-2-2b-it-GGUF",
+  "name": "Gemma 2 2B IT GGUF",
+  "param_count": 2610000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-2-2b-it",
+  "use_case_tags": [
+   "chat",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 1.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-2-9b-it-GGUF",
+  "name": "Gemma 2 9B IT GGUF",
+  "param_count": 9240000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-2-9b-it",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 5.8,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Qwen2.5-0.5B-Instruct-GGUF",
+  "name": "Qwen2.5 0.5B Instruct (bartowski)",
+  "param_count": 494000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Qwen2.5-0.5B-Instruct",
+  "use_case_tags": [
+   "small",
+   "fast"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Qwen2.5-7B-Instruct-GGUF",
+  "name": "Qwen2.5 7B Instruct (Unsloth GGUF)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Qwen2.5-7B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Llama-3.1-8B-Instruct-GGUF",
+  "name": "Llama 3.1 8B Instruct (Unsloth GGUF)",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Llama-3.1-8B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ggml-org/gemma-3-270m-it-GGUF",
+  "name": "Gemma 3 270M IT GGUF",
+  "param_count": 270000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "ggml-org/gemma-3-270m-it",
+  "use_case_tags": [
+   "small",
+   "edge",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 0.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B-GGUF",
+  "name": "DeepSeek R1 Distill Qwen 1.5B",
+  "param_count": 1540000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+  "use_case_tags": [
+   "reasoning",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+  "name": "DeepSeek R1 Distill Qwen 7B",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+  "use_case_tags": [
+   "reasoning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+  "name": "DeepSeek R1 Distill Qwen 14B",
+  "param_count": 14770000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+  "use_case_tags": [
+   "reasoning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/OLMo-2-0425-1B-Instruct-GGUF",
+  "name": "OLMo 2 1B Instruct GGUF",
+  "param_count": 1000000000,
+  "architecture": "Olmo2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/OLMo-2-0425-1B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/OLMo-2-1124-7B-Instruct-GGUF",
+  "name": "OLMo 2 7B Instruct GGUF",
+  "param_count": 7000000000,
+  "architecture": "Olmo2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/OLMo-2-1124-7B-Instruct",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Meta-Llama-3.1-70B-Instruct-GGUF",
+  "name": "Llama 3.1 70B Instruct GGUF",
+  "param_count": 70600000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Meta-Llama-3.1-70B-Instruct",
+  "use_case_tags": [
+   "large",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 40.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Mixtral-8x7B-Instruct-v0.1-GGUF",
+  "name": "Mixtral 8x7B Instruct GGUF",
+  "param_count": 46700000000,
+  "architecture": "MixtralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 12900000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Mixtral-8x7B-Instruct-v0.1",
+  "use_case_tags": [
+   "moe",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 26.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Mixtral-8x22B-Instruct-v0.1-GGUF",
+  "name": "Mixtral 8x22B Instruct GGUF",
+  "param_count": 141000000000,
+  "architecture": "MixtralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 39000000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Mixtral-8x22B-Instruct-v0.1",
+  "use_case_tags": [
+   "moe",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 80.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Kimi-K2.7-Code-GGUF",
+  "name": "Kimi K2.7 Code GGUF",
+  "param_count": 1000000000000,
+  "architecture": "KimiK25ForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Kimi-K2.7-Code",
+  "use_case_tags": [
+   "coding",
+   "moe",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 295.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "THUDM/GLM-5.2-744B-A40B-GGUF",
+  "name": "GLM-5.2 744B MoE GGUF",
+  "param_count": 744000000000,
+  "architecture": "Glm4MoeForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 40000000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "THUDM/GLM-5.2-744B-A40B",
+  "use_case_tags": [
+   "moe",
+   "frontier",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 370.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "meta-llama/Llama-3.2-1B-Instruct",
+  "name": "Llama 3.2 1B Instruct",
+  "param_count": 1240000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "meta-llama/Llama-3.2-1B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 2.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "meta-llama/Llama-3.2-3B-Instruct",
+  "name": "Llama 3.2 3B Instruct",
+  "param_count": 3210000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "meta-llama/Llama-3.2-3B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 6.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "name": "Llama 3.1 8B Instruct",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "meta-llama/Llama-3.1-8B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 16.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "mistralai/Mistral-7B-Instruct-v0.3",
+  "name": "Mistral 7B Instruct v0.3",
+  "param_count": 7250000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-7B-Instruct-v0.3",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 14.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/Phi-3-mini-4k-instruct",
+  "name": "Phi-3 Mini 4k Instruct",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "microsoft/Phi-3-mini-4k-instruct",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 7.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/phi-4",
+  "name": "Phi-4 14B",
+  "param_count": 14700000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "microsoft/phi-4",
+  "use_case_tags": [
+   "reasoning",
+   "fine-tuning",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 29.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "google/gemma-2-2b-it",
+  "name": "Gemma 2 2B IT",
+  "param_count": 2610000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "google/gemma-2-2b-it",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 5.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "google/gemma-2-9b-it",
+  "name": "Gemma 2 9B IT",
+  "param_count": 9240000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "google/gemma-2-9b-it",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 18.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+  "name": "SmolLM2 1.7B Instruct",
+  "param_count": 1700000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+  "use_case_tags": [
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 3.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/mistral-7b-v0.3-bnb-4bit",
+  "name": "Mistral 7B v0.3 (Unsloth 4-bit)",
+  "param_count": 7250000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/mistral-7b-v0.3-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+  "name": "Qwen2.5 7B Instruct (Unsloth 4-bit)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Qwen2.5-7B-Instruct-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Llama-3.1-8B-Instruct-bnb-4bit",
+  "name": "Llama 3.1 8B Instruct (Unsloth 4-bit)",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Llama-3.1-8B-Instruct-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 5.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0-GGUF",
+  "name": "TinyLlama 1.1B Chat GGUF",
+  "param_count": 1100000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "use_case_tags": [
+   "small",
+   "edge",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-0.6B-GGUF",
+  "name": "Qwen3 0.6B GGUF",
+  "param_count": 600000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-0.6B",
+  "use_case_tags": [
+   "small",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-1.7B-GGUF",
+  "name": "Qwen3 1.7B GGUF",
+  "param_count": 1700000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-1.7B",
+  "use_case_tags": [
+   "small",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-4B-GGUF",
+  "name": "Qwen3 4B GGUF",
+  "param_count": 4000000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-4B",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-8B-GGUF",
+  "name": "Qwen3 8B GGUF",
+  "param_count": 8000000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-8B",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 5.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-14B-GGUF",
+  "name": "Qwen3 14B GGUF",
+  "param_count": 14800000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-14B",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-32B-GGUF",
+  "name": "Qwen3 32B GGUF",
+  "param_count": 32800000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-32B",
+  "use_case_tags": [
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/QwQ-32B-GGUF",
+  "name": "QwQ 32B GGUF",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/QwQ-32B",
+  "use_case_tags": [
+   "reasoning",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",
+  "name": "Qwen2.5 Coder 32B Instruct GGUF",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+  "use_case_tags": [
+   "code",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Phi-4-mini-instruct-GGUF",
+  "name": "Phi-4 Mini Instruct GGUF",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Phi-4-mini-instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/Phi-3.5-mini-instruct-gguf",
+  "name": "Phi-3.5 Mini Instruct GGUF",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "microsoft/Phi-3.5-mini-instruct",
+  "use_case_tags": [
+   "small",
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Phi-4-GGUF",
+  "name": "Phi-4 Instruct (bartowski) GGUF",
+  "param_count": 14700000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Phi-4",
+  "use_case_tags": [
+   "reasoning",
+   "math"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Llama-3.3-70B-Instruct-GGUF",
+  "name": "Llama 3.3 70B Instruct GGUF",
+  "param_count": 70600000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Llama-3.3-70B-Instruct",
+  "use_case_tags": [
+   "large",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 42.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Llama-3.2-11B-Vision-Instruct-GGUF",
+  "name": "Llama 3.2 11B Vision Instruct GGUF",
+  "param_count": 10600000000,
+  "architecture": "MllamaForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Llama-3.2-11B-Vision-Instruct",
+  "use_case_tags": [
+   "vision",
+   "multimodal",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 7.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ggml-org/Kimi-VL-A3B-Thinking-2506-GGUF",
+  "name": "Kimi VL A3B Thinking GGUF",
+  "param_count": 16000000000,
+  "architecture": "KimiVLForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "ggml-org/Kimi-VL-A3B-Thinking-2506",
+  "use_case_tags": [
+   "vision",
+   "coding",
+   "thinking",
+   "moe",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 9.8,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B-GGUF",
+  "name": "DeepSeek R1 Distill Llama 8B GGUF",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+  "use_case_tags": [
+   "reasoning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/DeepSeek-R1-Distill-Qwen-32B-GGUF",
+  "name": "DeepSeek R1 Distill Qwen 32B GGUF",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/DeepSeek-R1-Distill-Qwen-32B",
+  "use_case_tags": [
+   "reasoning",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-2-27b-it-GGUF",
+  "name": "Gemma 2 27B IT GGUF",
+  "param_count": 27200000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-2-27b-it",
+  "use_case_tags": [
+   "chat",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 16.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-3-1b-it-GGUF",
+  "name": "Gemma 3 1B IT GGUF",
+  "param_count": 1000000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-3-1b-it",
+  "use_case_tags": [
+   "small",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 0.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-3-4b-it-GGUF",
+  "name": "Gemma 3 4B IT GGUF",
+  "param_count": 4000000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-3-4b-it",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 2.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-3-12b-it-GGUF",
+  "name": "Gemma 3 12B IT GGUF",
+  "param_count": 12200000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-3-12b-it",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 7.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/gemma-3-27b-it-GGUF",
+  "name": "Gemma 3 27B IT GGUF",
+  "param_count": 27400000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/gemma-3-27b-it",
+  "use_case_tags": [
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 16.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Qwen2.5-Coder-7B-Instruct-GGUF",
+  "name": "Qwen2.5 Coder 7B (Unsloth GGUF)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Qwen2.5-Coder-7B-Instruct",
+  "use_case_tags": [
+   "code",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/gemma-2-9b-it-GGUF",
+  "name": "Gemma 2 9B IT (Unsloth GGUF)",
+  "param_count": 9240000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/gemma-2-9b-it",
+  "use_case_tags": [
+   "chat",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 5.8,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Mistral-Nemo-Instruct-2407-GGUF",
+  "name": "Mistral Nemo Instruct GGUF",
+  "param_count": 12200000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Mistral-Nemo-Instruct-2407",
+  "use_case_tags": [
+   "chat",
+   "general"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 7.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Mistral-Small-Instruct-2409-GGUF",
+  "name": "Mistral Small Instruct GGUF",
+  "param_count": 22000000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Mistral-Small-Instruct-2409",
+  "use_case_tags": [
+   "chat",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 13.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Codestral-22B-v0.1-GGUF",
+  "name": "Codestral 22B GGUF",
+  "param_count": 22200000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Codestral-22B-v0.1",
+  "use_case_tags": [
+   "code",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 13.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ibm-granite/granite-3.1-8b-instruct-GGUF",
+  "name": "Granite 3.1 8B Instruct GGUF",
+  "param_count": 8000000000,
+  "architecture": "GraniteForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "ibm-granite/granite-3.1-8b-instruct",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ibm-granite/granite-3.1-2b-instruct-GGUF",
+  "name": "Granite 3.1 2B Instruct GGUF",
+  "param_count": 2500000000,
+  "architecture": "GraniteForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "ibm-granite/granite-3.1-2b-instruct",
+  "use_case_tags": [
+   "small",
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "NousResearch/Hermes-3-Llama-3.1-8B-GGUF",
+  "name": "Hermes 3 Llama 3.1 8B GGUF",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "NousResearch/Hermes-3-Llama-3.1-8B",
+  "use_case_tags": [
+   "chat",
+   "tool-use"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Yi-1.5-9B-Chat-GGUF",
+  "name": "Yi 1.5 9B Chat GGUF",
+  "param_count": 8830000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Yi-1.5-9B-Chat",
+  "use_case_tags": [
+   "chat",
+   "multilingual"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 5.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "internlm/internlm2_5-7b-chat-gguf",
+  "name": "InternLM2.5 7B Chat GGUF",
+  "param_count": 7700000000,
+  "architecture": "InternLM2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "internlm/internlm2_5-7b-chat",
+  "use_case_tags": [
+   "chat",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceH4/zephyr-7b-beta-GGUF",
+  "name": "Zephyr 7B Beta GGUF",
+  "param_count": 7240000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "HuggingFaceH4/zephyr-7b-beta",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Qwen2.5-Math-1.5B-Instruct-GGUF",
+  "name": "Qwen2.5 Math 1.5B Instruct GGUF",
+  "param_count": 1540000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Qwen2.5-Math-1.5B-Instruct",
+  "use_case_tags": [
+   "math",
+   "small"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 1.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Math-72B-Instruct-GGUF",
+  "name": "Qwen2.5 Math 72B Instruct GGUF",
+  "param_count": 72700000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Math-72B-Instruct",
+  "use_case_tags": [
+   "math",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 43.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF",
+  "name": "DeepSeek R1 Distill Qwen 7B (Unsloth)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/DeepSeek-R1-Distill-Qwen-7B",
+  "use_case_tags": [
+   "reasoning",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/OLMo-2-0325-32B-Instruct-GGUF",
+  "name": "OLMo 2 32B Instruct GGUF",
+  "param_count": 32000000000,
+  "architecture": "Olmo2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/OLMo-2-0325-32B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "large",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 19.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "allenai/OLMo-2-1124-13B-Instruct-GGUF",
+  "name": "OLMo 2 13B Instruct GGUF",
+  "param_count": 13000000000,
+  "architecture": "Olmo2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "allenai/OLMo-2-1124-13B-Instruct",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 8.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct-GGUF",
+  "name": "Qwen2.5 VL 7B Instruct GGUF",
+  "param_count": 8290000000,
+  "architecture": "Qwen2VLForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "use_case_tags": [
+   "vision",
+   "multimodal",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 5.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-VL-3B-Instruct-GGUF",
+  "name": "Qwen2.5 VL 3B Instruct GGUF",
+  "param_count": 3750000000,
+  "architecture": "Qwen2VLForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "use_case_tags": [
+   "vision",
+   "multimodal",
+   "small",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Ministral-8B-Instruct-2410-GGUF",
+  "name": "Ministral 8B Instruct GGUF",
+  "param_count": 8000000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Ministral-8B-Instruct-2410",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Llama-3.2-1B-Instruct-GGUF",
+  "name": "Llama 3.2 1B Instruct (Unsloth GGUF)",
+  "param_count": 1240000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Llama-3.2-1B-Instruct",
+  "use_case_tags": [
+   "small",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 0.8,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Llama-3.2-3B-Instruct-GGUF",
+  "name": "Llama 3.2 3B Instruct (Unsloth GGUF)",
+  "param_count": 3210000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "unsloth/Llama-3.2-3B-Instruct",
+  "use_case_tags": [
+   "small",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 2.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+  "name": "Qwen2.5 7B Instruct (bartowski)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "bartowski/Qwen2.5-7B-Instruct",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "lmstudio-community/Qwen2.5-7B-Instruct-GGUF",
+  "name": "Qwen2.5 7B Instruct (LM Studio)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "lmstudio-community/Qwen2.5-7B-Instruct",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF",
+  "name": "Llama 3.1 8B Instruct (LM Studio)",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj"
+  ],
+  "tokenizer_id": "lmstudio-community/Meta-Llama-3.1-8B-Instruct",
+  "use_case_tags": [
+   "chat"
+  ],
+  "benchmark_hint": "medium",
+  "format": "gguf",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 4.9,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-8B",
+  "name": "Qwen3 8B",
+  "param_count": 8000000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-8B",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 16.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-4B",
+  "name": "Qwen3 4B",
+  "param_count": 4000000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-4B",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 8.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen3-1.7B",
+  "name": "Qwen3 1.7B",
+  "param_count": 1700000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-1.7B",
+  "use_case_tags": [
+   "small",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 3.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+  "name": "Qwen2.5 Coder 32B Instruct",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+  "use_case_tags": [
+   "code",
+   "fine-tuning",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 65.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-32B-Instruct",
+  "name": "Qwen2.5 32B Instruct",
+  "param_count": 32800000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-32B-Instruct",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 65.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/Phi-4-mini-instruct",
+  "name": "Phi-4 Mini Instruct",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "microsoft/Phi-4-mini-instruct",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 7.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "microsoft/Phi-3.5-mini-instruct",
+  "name": "Phi-3.5 Mini Instruct",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "microsoft/Phi-3.5-mini-instruct",
+  "use_case_tags": [
+   "chat",
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 7.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "name": "TinyLlama 1.1B Chat",
+  "param_count": 1100000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+  "use_case_tags": [
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "name": "SmolLM2 135M Instruct",
+  "param_count": 135000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+  "use_case_tags": [
+   "small",
+   "fine-tuning",
+   "edge"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.3,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "name": "SmolLM2 360M Instruct",
+  "param_count": 360000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "use_case_tags": [
+   "small",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 0.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "google/gemma-2-27b-it",
+  "name": "Gemma 2 27B IT",
+  "param_count": 27200000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "google/gemma-2-27b-it",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "large"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 54.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "google/gemma-3-1b-it",
+  "name": "Gemma 3 1B IT",
+  "param_count": 1000000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "google/gemma-3-1b-it",
+  "use_case_tags": [
+   "small",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 2.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "google/gemma-3-4b-it",
+  "name": "Gemma 3 4B IT",
+  "param_count": 4000000000,
+  "architecture": "Gemma3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "google/gemma-3-4b-it",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 8.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "mistralai/Mistral-Nemo-Instruct-2407",
+  "name": "Mistral Nemo Instruct",
+  "param_count": 12200000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "mistralai/Mistral-Nemo-Instruct-2407",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 24.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "mistralai/Ministral-8B-Instruct-2410",
+  "name": "Ministral 8B Instruct",
+  "param_count": 8000000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "mistralai/Ministral-8B-Instruct-2410",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 16.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ibm-granite/granite-3.1-8b-instruct",
+  "name": "Granite 3.1 8B Instruct",
+  "param_count": 8000000000,
+  "architecture": "GraniteForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "ibm-granite/granite-3.1-8b-instruct",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 16.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "ibm-granite/granite-3.1-2b-instruct",
+  "name": "Granite 3.1 2B Instruct",
+  "param_count": 2500000000,
+  "architecture": "GraniteForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "ibm-granite/granite-3.1-2b-instruct",
+  "use_case_tags": [
+   "small",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 5.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "NousResearch/Hermes-3-Llama-3.1-8B",
+  "name": "Hermes 3 Llama 3.1 8B",
+  "param_count": 8030000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "NousResearch/Hermes-3-Llama-3.1-8B",
+  "use_case_tags": [
+   "chat",
+   "tool-use",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 16.1,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "01-ai/Yi-1.5-9B-Chat",
+  "name": "Yi 1.5 9B Chat",
+  "param_count": 8830000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "01-ai/Yi-1.5-9B-Chat",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 17.7,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "internlm/internlm2_5-7b-chat",
+  "name": "InternLM2.5 7B Chat",
+  "param_count": 7700000000,
+  "architecture": "InternLM2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "internlm/internlm2_5-7b-chat",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 15.4,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "HuggingFaceH4/zephyr-7b-beta",
+  "name": "Zephyr 7B Beta",
+  "param_count": 7240000000,
+  "architecture": "MistralForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "HuggingFaceH4/zephyr-7b-beta",
+  "use_case_tags": [
+   "chat",
+   "fine-tuning"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 14.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "name": "Qwen2.5 VL 7B Instruct",
+  "param_count": 8290000000,
+  "architecture": "Qwen2VLForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "use_case_tags": [
+   "vision",
+   "multimodal",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 16.6,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "name": "Qwen2.5 VL 3B Instruct",
+  "param_count": 3750000000,
+  "architecture": "Qwen2VLForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "use_case_tags": [
+   "vision",
+   "multimodal",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 7.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Phi-4-mini-instruct-bnb-4bit",
+  "name": "Phi-4 Mini Instruct (Unsloth 4-bit)",
+  "param_count": 3800000000,
+  "architecture": "Phi3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "mit",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "unsloth/Phi-4-mini-instruct-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 2.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+  "name": "Qwen2.5 Coder 7B (Unsloth 4-bit)",
+  "param_count": 7620000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "unsloth/Qwen2.5-Coder-7B-Instruct-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth",
+   "code"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 4.5,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "unsloth/gemma-2-9b-it-bnb-4bit",
+  "name": "Gemma 2 9B IT (Unsloth 4-bit)",
+  "param_count": 9240000000,
+  "architecture": "Gemma2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "gemma",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "unsloth/gemma-2-9b-it-bnb-4bit",
+  "use_case_tags": [
+   "finetune",
+   "4-bit",
+   "unsloth"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 6.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "meta-llama/Llama-3.3-70B-Instruct",
+  "name": "Llama 3.3 70B Instruct",
+  "param_count": 70600000000,
+  "architecture": "LlamaForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "llama3.1",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "meta-llama/Llama-3.3-70B-Instruct",
+  "use_case_tags": [
+   "large",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": true,
+  "approx_download_gb": 140.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-72B-Instruct",
+  "name": "Qwen2.5 72B Instruct",
+  "param_count": 72700000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-72B-Instruct",
+  "use_case_tags": [
+   "large",
+   "fine-tuning",
+   "unverified"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 145.0,
+  "explicit_risks": []
  }
 ]

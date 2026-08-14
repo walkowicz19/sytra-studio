@@ -70,11 +70,11 @@
       </div>
       <div class="hw-row">
         <span class="hw-label">VRAM</span>
-        <span class="hw-val">{(hwStore.info.vram_mb / 1024).toFixed(0)} GB</span>
+        <span class="hw-val">{hwStore.info.vram_mb != null ? (hwStore.info.vram_mb / 1024).toFixed(0) + ' GB' : 'unknown'}</span>
       </div>
       <div class="hw-row">
         <span class="hw-label">RAM</span>
-        <span class="hw-val">{(hwStore.info.ram_mb / 1024).toFixed(0)} GB</span>
+        <span class="hw-val">{hwStore.info.ram_mb != null ? (hwStore.info.ram_mb / 1024).toFixed(0) + ' GB' : 'unknown'}</span>
       </div>
     {:else}
       <span class="text-small">{t('sidebar.detecting')}</span>

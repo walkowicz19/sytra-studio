@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { historyStore, setRunHistory, pushToast, trainFormStore, setTab } from '../store.svelte'
+  import { historyStore, setRunHistory, pushToast, trainFormStore, setTab, watchTelemetry, run, resetRun } from '../store.svelte'
   import { t } from '../i18n.svelte'
   import { api } from '../api'
 
@@ -76,7 +76,9 @@ ollama run my-sytra-model`
     try {
       const settings = await api.getSettings()
       effectiveRamMb = settings.effective_main_memory_mb
-    } catch {}
+    } catch (e) {
+      pushToast('error', `Failed to load settings: ${e instanceof Error ? e.message : String(e)}`)
+    }
     await refresh()
   })
 
@@ -134,42 +136,32 @@ ollama run my-sytra-model`
     
     const token = useEnvToken ? '' : pasteToken
     try {
-      const opId = await api.publishRun(activePublishRun.op_id, repoId, isPrivate, token)
+      const opId = await api.publishRun(activePublishRun.op_id, repoId, isPrivate, token, license)
+      resetRun()
+      run.opId = opId
+      run.kind = 'merge'
+      run.status = 'running'
       pushToast('success', 'Publish process launched')
-      
       if (!('__TAURI_INTERNALS__' in window)) {
-        simulatePublish()
+        pushToast('info', 'Browser preview cannot publish; run the desktop app.')
+        publishing = false
       } else {
-        // In Tauri, the telemetry events will stream back via Tauri event listener
-        // We listen for publish progress updates or logs.
-        // For simple UI, we can poll status or listen to sytra event line telemetry.
+        watchTelemetry(opId)
+        const unsub = setInterval(() => {
+          if (['done', 'error', 'stopped'].includes(run.status as string) || !publishing) {
+            clearInterval(unsub)
+            publishing = false
+            if (run.status === 'done') {
+              pushToast('success', 'Model published')
+              activePublishRun = null
+            }
+          }
+        }, 400)
       }
-    } catch (e: any) {
-      pushToast('error', `Publish failed: ${e.message || String(e)}`)
+    } catch (e: unknown) {
+      pushToast('error', `Publish failed: ${e instanceof Error ? e.message : String(e)}`)
       publishing = false
     }
-  }
-
-  function simulatePublish() {
-    let p = 0
-    const iv = setInterval(() => {
-      p += 0.1
-      publishProgress = Math.min(p * 100, 100)
-      publishLogs = [...publishLogs, `Uploading chunk file index: ${Math.round(p * 10)}...`]
-      
-      if (p >= 1) {
-        clearInterval(iv)
-        publishing = false
-        const targetUrl = `https://huggingface.co/${repoId}`
-        pushToast('success', 'Model published successfully!')
-        
-        // Update local provenance link in runs history list
-        historyStore.records = historyStore.records.map(r => 
-          r.op_id === activePublishRun.op_id ? { ...r, provenance: targetUrl } : r
-        )
-        activePublishRun = null
-      }
-    }, 450)
   }
 </script>
 

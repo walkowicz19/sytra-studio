@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 sytra-contracts = { path = "../sytra-contracts" }
-sytra-host = { path = "../sytra-host" }
+sytra-host = { path = "../sytra-host", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

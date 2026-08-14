@@ -22,31 +22,24 @@ def _run_module(module: str, config_path: Path) -> list[dict]:
     return [json.loads(l) for l in lines]
 
 
-def test_train_subprocess_emits_well_formed_transcript():
+def _terminal_events(events: list[dict]) -> list[dict]:
+    return [e for e in events if e.get("type") == "event" and e["event"] in ("done", "error")]
+
+
+def test_train_subprocess_fails_closed_without_cuda_training_stack():
     events = _run_module("sytra_runner", FIXTURES / "run.golden.yaml")
-    assert events[0]["type"] == "event"
-    assert events[0]["event"] == "starting"
-
-    terminal = [e for e in events if e.get("type") == "event" and e["event"] in ("done", "error")]
+    terminal = _terminal_events(events)
     assert len(terminal) == 1
-    assert terminal[0]["event"] == "done"
-
-    metrics = [e for e in events if e["type"] == "metric"]
-    assert all("step" in m for m in metrics)
-    assert [m["step"] for m in metrics] == [1, 2, 3, 4]
+    assert terminal[0]["event"] == "error"
+    assert not any(e.get("event") == "done" for e in events)
 
 
-def test_merge_subprocess_emits_well_formed_transcript():
+def test_merge_subprocess_fails_closed_without_mergekit_or_on_error():
     events = _run_module("sytra_runner.merge", FIXTURES / "merge.golden.yaml")
-    assert events[0]["type"] == "event"
-    assert events[0]["event"] == "starting"
-
-    terminal = [e for e in events if e.get("type") == "event" and e["event"] in ("done", "error")]
+    terminal = _terminal_events(events)
     assert len(terminal) == 1
-    assert terminal[0]["event"] == "done"
-
-    metrics = [e for e in events if e["type"] == "metric"]
-    assert all(0.0 <= m["progress"] <= 1.0 for m in metrics)
+    assert terminal[0]["event"] == "error"
+    assert not any(e.get("event") == "done" for e in events)
 
 
 def test_merge_subprocess_with_red_verdict_emits_error_and_no_done():

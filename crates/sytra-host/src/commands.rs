@@ -3,7 +3,7 @@ use crate::{
     run_archive::RunArchive,
 };
 use sytra_contracts::{
-    guider::{Compatibility, Guider, HardwareCapabilities, TrainRecipe, ModelCatalogEntry},
+    guider::{Compatibility, Guider, HardwareCapabilities, ModelCatalogEntry, TrainRecipe},
     merge_config::{MergeMethod, Verdict},
     operation::{OpRecord, OpStatus, Operation, TrainSpec},
     TelemetryLine,
@@ -229,7 +229,10 @@ fn resolve_model_with_fallback(guider: &Guider, m_ref: &str) -> Option<ModelCata
                         if let Ok(meta) = entry.metadata() {
                             if meta.is_file() {
                                 let name = entry.file_name().to_string_lossy().to_lowercase();
-                                if name.ends_with(".safetensors") || name.ends_with(".bin") || name.ends_with(".pt") {
+                                if name.ends_with(".safetensors")
+                                    || name.ends_with(".bin")
+                                    || name.ends_with(".pt")
+                                {
                                     total_bytes += meta.len();
                                 }
                             }
@@ -247,13 +250,19 @@ fn resolve_model_with_fallback(guider: &Guider, m_ref: &str) -> Option<ModelCata
         model_id: m_ref.to_string(),
         name: m_ref.to_string(),
         param_count,
-        architecture: "Qwen2".to_string(),
+        architecture: "unknown".to_string(),
         dtype: "bfloat16".to_string(),
         moe_active_params: None,
-        license: "apache-2.0".to_string(),
+        license: "unknown".to_string(),
         default_target_modules: vec![],
         tokenizer_id: m_ref.to_string(),
         use_case_tags: vec![],
         benchmark_hint: String::new(),
+        format: String::new(),
+        downloadable: false,
+        workflows: vec![],
+        gated: false,
+        approx_download_gb: None,
+        explicit_risks: vec!["Not in the pinned Sytra catalog; architecture is unknown.".into()],
     })
 }

@@ -33,18 +33,19 @@ impl DataSource for KlayerDataSource {
     }
 
     async fn preview(&self, spec: &DatasetSpec, n: usize) -> Result<PreviewRows, DataSourceError> {
-        let params = Self::parse_params(spec)?;
-        // Return simulated preview rows from the Klayer database
-        let mut rows = Vec::new();
-        for i in 0..n {
-            rows.push(serde_json::json!({
-                "prompt": format!("Query: {}. Knowledge retrieval sample {}", params.query, i + 1),
-                "completion": format!("Retrieved fact from trust tier {} (snapshot: {})", params.min_trust_tier, params.snapshot)
-            }));
-        }
+        let temp = std::env::temp_dir().join(format!("sytra-klayer-preview-{}", uuid::Uuid::new_v4()));
+        let materialized = self.materialize(spec, &temp).await?;
+        let content = std::fs::read_to_string(&materialized.jsonl_path)?;
+        let rows: Vec<_> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(n)
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        let _ = std::fs::remove_dir_all(&temp);
         Ok(PreviewRows {
             rows,
-            total_estimate: Some(100),
+            total_estimate: Some(materialized.row_count),
         })
     }
 
@@ -57,51 +58,41 @@ impl DataSource for KlayerDataSource {
         std::fs::create_dir_all(out_dir)?;
         let jsonl_path = out_dir.join("data.jsonl");
 
-        // Try executing kl-train binary if present
-        let run_real = std::process::Command::new("kl-train")
+        let status = std::process::Command::new("kl-train")
             .arg("--help")
             .status()
-            .is_ok();
+            .map_err(|_| {
+                DataSourceError::InvalidSpec(
+                    "kl-train is not installed or not on PATH; refusing to fabricate dataset rows"
+                        .into(),
+                )
+            })?;
+        if !status.success() {
+            return Err(DataSourceError::InvalidSpec(
+                "kl-train is not usable; refusing to fabricate dataset rows".into(),
+            ));
+        }
 
-        let row_count = if run_real {
-            let status = std::process::Command::new("kl-train")
-                .args(&[
-                    "materialize",
-                    "--query",
-                    &params.query,
-                    "--min-trust-tier",
-                    &params.min_trust_tier,
-                    "--snapshot",
-                    &params.snapshot,
-                    "--output",
-                    &jsonl_path.display().to_string(),
-                ])
-                .status()?;
-            if !status.success() {
-                return Err(DataSourceError::InvalidSpec(
-                    "kl-train execution failed".into(),
-                ));
-            }
-            // Count rows
-            let content = std::fs::read_to_string(&jsonl_path)?;
-            content.lines().filter(|l| !l.trim().is_empty()).count()
-        } else {
-            // Write simulated database rows
-            let mut rows = Vec::new();
-            for i in 0..10 {
-                rows.push(serde_json::json!({
-                    "prompt": format!("Query: {}. Knowledge retrieval sample {}", params.query, i + 1),
-                    "completion": format!("Retrieved fact from trust tier {} (snapshot: {})", params.min_trust_tier, params.snapshot)
-                }));
-            }
-            let body = rows
-                .iter()
-                .map(|r| r.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            std::fs::write(&jsonl_path, body)?;
-            10
-        };
+        let status = std::process::Command::new("kl-train")
+            .args([
+                "materialize",
+                "--query",
+                &params.query,
+                "--min-trust-tier",
+                &params.min_trust_tier,
+                "--snapshot",
+                &params.snapshot,
+                "--output",
+                &jsonl_path.display().to_string(),
+            ])
+            .status()?;
+        if !status.success() {
+            return Err(DataSourceError::InvalidSpec(
+                "kl-train execution failed".into(),
+            ));
+        }
+        let content = std::fs::read_to_string(&jsonl_path)?;
+        let row_count = content.lines().filter(|l| !l.trim().is_empty()).count();
 
         Ok(Materialized {
             jsonl_path,

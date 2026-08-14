@@ -32,8 +32,8 @@
   onMount(async () => {
     // Sync defaults with detected hardware if available
     if (hwStore.info) {
-      vramOverride = Math.round(hwStore.info.vram_mb / 1024)
-      ramOverride = Math.round(hwStore.info.ram_mb / 1024)
+      vramOverride = Math.round((hwStore.info.vram_mb ?? 0) / 1024)
+      ramOverride = Math.round((hwStore.info.ram_mb ?? 0) / 1024)
     }
     await updateRecommendations()
   })

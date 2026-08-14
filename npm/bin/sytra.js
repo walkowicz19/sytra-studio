@@ -196,7 +196,7 @@ async function run() {
   const env = { ...process.env, SYTRA_WORKSPACE: sytraDir };
 
   if (command === 'mcp') {
-    console.log(`Starting Sytra MCP Server from ${mcpPath}...`);
+    console.error(`Starting Sytra MCP Server from ${mcpPath}...`);
     const child = spawn(mcpPath, [], { env, stdio: 'inherit' });
     
     child.on('close', (code) => {

@@ -1,8 +1,25 @@
 use anyhow::{anyhow, Result};
+use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use sytra_contracts::OpRecord;
+use sytra_contracts::{OpRecord, OpStatus};
 use uuid::Uuid;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RunSummary {
+    pub op_id: Uuid,
+    pub kind: String,
+    pub status: OpStatus,
+    pub artifact_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct SlimRecord {
+    op_id: Uuid,
+    kind: String,
+    status: OpStatus,
+    artifact_path: PathBuf,
+}
 
 pub struct RunArchive {
     archive_dir: PathBuf,
@@ -56,6 +73,31 @@ impl RunArchive {
         }
 
         // Sort runs (could be by timestamp if timestamp was in OpRecord, but we can sort by op_id/stable identifier for now)
+        records.sort_by(|a, b| a.op_id.cmp(&b.op_id));
+        Ok(records)
+    }
+
+    /// Lists run summaries without deserializing full configs.
+    pub fn list_summaries(&self) -> Result<Vec<RunSummary>> {
+        fs::create_dir_all(&self.archive_dir)?;
+        let mut records = Vec::new();
+
+        for entry in fs::read_dir(&self.archive_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("json") {
+                let json_str = fs::read_to_string(&path)?;
+                if let Ok(record) = serde_json::from_str::<SlimRecord>(&json_str) {
+                    records.push(RunSummary {
+                        op_id: record.op_id,
+                        kind: record.kind,
+                        status: record.status,
+                        artifact_path: record.artifact_path,
+                    });
+                }
+            }
+        }
+
         records.sort_by(|a, b| a.op_id.cmp(&b.op_id));
         Ok(records)
     }

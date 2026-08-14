@@ -158,4 +158,47 @@ mod tests {
         };
         assert_eq!(s.effective_main_memory_mb(32768), 32768);
     }
+
+    #[test]
+    fn settings_json_round_trip_preserves_all_fields() {
+        let ws = std::env::temp_dir().join("sytra-settings-field-snapshot");
+        std::fs::create_dir_all(&ws).unwrap();
+        let original = AppSettings {
+            hf_cache_dir: Some(ws.join("cache")),
+            main_memory_limit_mb: Some(12288),
+            tokenless_download: false,
+            low_bit_mode: Some(2),
+            vram_expert_cache_mb: Some(2048),
+            default_context_window: 8192,
+            default_temperature: 0.2,
+            enable_flash_attention: false,
+            kv_cache_quant: "fp16".into(),
+            vram_limit_mb: Some(4096),
+            cpu_kv_cache: true,
+        };
+        original.save(&ws).unwrap();
+        let loaded = AppSettings::load(&ws);
+        let expected = serde_json::to_value(&original).unwrap();
+        let actual = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(actual, expected);
+        let keys: std::collections::BTreeSet<_> = actual.as_object().unwrap().keys().cloned().collect();
+        let expected_keys: std::collections::BTreeSet<_> = [
+            "hf_cache_dir",
+            "main_memory_limit_mb",
+            "tokenless_download",
+            "low_bit_mode",
+            "vram_expert_cache_mb",
+            "default_context_window",
+            "default_temperature",
+            "enable_flash_attention",
+            "kv_cache_quant",
+            "vram_limit_mb",
+            "cpu_kv_cache",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(keys, expected_keys);
+        std::fs::remove_dir_all(&ws).ok();
+    }
 }

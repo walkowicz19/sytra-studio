@@ -8,6 +8,7 @@ use std::thread;
 use tokio::sync::mpsc;
 
 use crate::env_provisioner::EnvProvisioner;
+use crate::process::kill_process_tree;
 use sytra_contracts::{parse_line, Operation, TelemetryLine};
 
 /// The active subprocess, tagged with a generation counter so a stale
@@ -24,29 +25,6 @@ pub struct JobRunner {
     env_provisioner: EnvProvisioner,
     active: Arc<Mutex<Option<ActiveJob>>>,
     next_generation: AtomicU64,
-}
-
-/// Kills the process and its whole descendant tree. `Child::kill` alone is
-/// not enough: the runner spawns grandchildren (mergekit-yaml, HF download
-/// workers) that would survive and keep holding GPU memory and file locks,
-/// which is exactly what blocked cancel-then-restart.
-fn kill_process_tree(pid: u32) {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        // Negative pid targets the process group (child is spawned with
-        // process_group(0) below).
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{pid}")])
-            .status();
-    }
 }
 
 impl JobRunner {
@@ -97,7 +75,11 @@ impl JobRunner {
             .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
             .env(
                 "SYTRA_TOKENLESS",
-                if crate::settings::AppSettings::load(&self.workspace_root).tokenless_download { "1" } else { "0" },
+                if crate::settings::AppSettings::load(&self.workspace_root).tokenless_download {
+                    "1"
+                } else {
+                    "0"
+                },
             )
             // Multi-GB model downloads go where the user chose (default:
             // workspace .hf-cache) instead of filling the C: SSD. Loaded

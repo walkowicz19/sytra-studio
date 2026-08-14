@@ -21,6 +21,8 @@ pub enum ResourceError {
         estimated_mb: u64,
         available_mb: u64,
     },
+    #[error("Hardware memory could not be detected; refusing to estimate or start the operation")]
+    UnknownHardware,
 }
 
 pub struct ResourceGuard {
@@ -106,6 +108,9 @@ impl ResourceGuard {
         model: &ModelCatalogEntry,
         spec: &TrainSpec,
     ) -> Result<(), ResourceError> {
+        if self.total_vram_mb == 0 {
+            return Err(ResourceError::UnknownHardware);
+        }
         let est_vram = Self::estimate_train_vram(model, spec);
         if est_vram > self.total_vram_mb {
             return Err(ResourceError::VramOverflow {
@@ -123,6 +128,9 @@ impl ResourceGuard {
         method: MergeMethod,
         out_of_core: bool,
     ) -> Result<(), ResourceError> {
+        if self.total_ram_mb == 0 {
+            return Err(ResourceError::UnknownHardware);
+        }
         let (est_ram, est_disk) = Self::estimate_merge_cost(models, method, out_of_core);
 
         if est_ram > self.total_ram_mb {
@@ -140,5 +148,84 @@ impl ResourceGuard {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sytra_contracts::guider::Guider;
+
+    #[test]
+    fn unknown_vram_blocks_train() {
+        let guard = ResourceGuard::new(0, 32768, 102400);
+        let guider = Guider::new();
+        let model = guider.catalog().first().expect("catalog");
+        let spec = TrainSpec {
+            config: sytra_contracts::run_config::RunConfig {
+                version: 1,
+                run_id: None,
+                train_mode: sytra_contracts::run_config::TrainMode::Sft,
+                model: model.model_id.clone(),
+                backend: sytra_contracts::run_config::BackendConfig {
+                    kind: sytra_contracts::run_config::BackendKind::Cpu,
+                    judge_model: None,
+                },
+                data: sytra_contracts::run_config::DataSpec::Hf {
+                    jsonl_path: None,
+                    fingerprint: None,
+                    hf: sytra_contracts::run_config::HfParams {
+                        repo_id: "org/d".into(),
+                        split: "train".into(),
+                        revision: None,
+                        config: None,
+                    },
+                },
+                adapter: sytra_contracts::run_config::AdapterConfig {
+                    kind: AdapterType::Lora,
+                    rank: 16,
+                    alpha: 32,
+                    dropout: 0.05,
+                    target_modules: vec![],
+                    quant_bits: None,
+                },
+                optim: sytra_contracts::run_config::OptimConfig {
+                    learning_rate: 2e-4,
+                    schedule: sytra_contracts::run_config::Schedule::Cosine,
+                    warmup_steps: 20,
+                    weight_decay: 0.0,
+                    grad_accumulation_steps: 8,
+                },
+                train: sytra_contracts::run_config::TrainParams {
+                    max_steps: Some(10),
+                    epochs: None,
+                    batch_size: 2,
+                    max_seq_len: 2048,
+                    save_every: 2,
+                    packing: false,
+                },
+                algo: Default::default(),
+                output: sytra_contracts::run_config::RunOutput {
+                    adapter_path: "out/adapter".into(),
+                    resume_from: None,
+                },
+            },
+            config_path: "run.yaml".into(),
+        };
+        assert_eq!(
+            guard.check_train(model, &spec),
+            Err(ResourceError::UnknownHardware)
+        );
+    }
+
+    #[test]
+    fn unknown_ram_blocks_merge() {
+        let guard = ResourceGuard::new(8192, 0, 102400);
+        let guider = Guider::new();
+        let model = guider.catalog().first().expect("catalog");
+        assert_eq!(
+            guard.check_merge(&[model], MergeMethod::Linear, false),
+            Err(ResourceError::UnknownHardware)
+        );
     }
 }

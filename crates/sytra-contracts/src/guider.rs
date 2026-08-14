@@ -2,6 +2,10 @@ use crate::merge_config::{MergeMethod, Verdict};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+fn default_downloadable() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelCatalogEntry {
     pub model_id: String,
@@ -15,6 +19,18 @@ pub struct ModelCatalogEntry {
     pub tokenizer_id: String,
     pub use_case_tags: Vec<String>,
     pub benchmark_hint: String,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default = "default_downloadable")]
+    pub downloadable: bool,
+    #[serde(default)]
+    pub workflows: Vec<String>,
+    #[serde(default)]
+    pub gated: bool,
+    #[serde(default)]
+    pub approx_download_gb: Option<f64>,
+    #[serde(default)]
+    pub explicit_risks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,8 +228,9 @@ impl Guider {
         let mut recipes = Vec::new();
 
         for model in &self.catalog {
-            // Estimate standard VRAM for full/lora/qlora
-            // LLaMA/Mistral estimation formula:
+            if !model.allows_finetune() || !model.allows_download() {
+                continue;
+            }
             let model_params = model.param_count as f64;
 
             // Recipe 1: QLoRA (4-bit quant)
@@ -319,5 +336,50 @@ mod lineage_tests {
             "reason: {}",
             compat.reason
         );
+    }
+
+    #[test]
+    fn catalog_contains_exact_qwen_3_5_9b_base_contract() {
+        let guider = Guider::new();
+        let model = guider
+            .resolve_model("Qwen/Qwen3.5-9B-Base")
+            .expect("Qwen3.5 9B Base must be present in the embedded catalog");
+
+        assert_eq!(model.architecture, "Qwen3_5ForConditionalGeneration");
+        assert_eq!(model.param_count, 10_000_000_000);
+        assert_eq!(model.dtype, "bfloat16");
+        assert_eq!(model.license, "apache-2.0");
+        assert_eq!(model.tokenizer_id, "Qwen/Qwen3.5-9B-Base");
+        assert_eq!(
+            model.default_target_modules,
+            ["q_proj", "k_proj", "v_proj", "o_proj"]
+        );
+    }
+
+    #[test]
+    fn catalog_is_expanded_and_download_gated_placeholders() {
+        let guider = Guider::new();
+        assert!(
+            guider.catalog().len() >= 100,
+            "catalog should list a broad Hugging Face download set, got {}",
+            guider.catalog().len()
+        );
+        let placeholder = guider.resolve_model("org/knowledge-ft").unwrap();
+        assert!(!placeholder.allows_download());
+        let olmoe = guider
+            .resolve_model("allenai/OLMoE-1B-7B-0125-Instruct-GGUF")
+            .expect("OLMoE GGUF must be downloadable from the catalog");
+        assert!(olmoe.allows_download());
+        assert_eq!(olmoe.inferred_format(), "gguf");
+    }
+
+    #[test]
+    fn qwen35_alerts_never_claim_qwen2() {
+        use crate::model_alerts::alerts_for;
+        let guider = Guider::new();
+        let model = guider.resolve_model("Qwen/Qwen3.5-9B-Base").unwrap();
+        let alerts = alerts_for(model, Some(12 * 1024), Some(12 * 1024));
+        assert!(alerts.iter().any(|a| a.code == "never_qwen2"));
+        assert!(alerts.iter().any(|a| a.code == "vision_not_text_lora"));
     }
 }

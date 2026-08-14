@@ -1,11 +1,12 @@
 /**
  * Tauri bridge — wraps invoke() calls with typed payloads.
- * Falls back to mock data when running in a plain browser (dev mode without Tauri).
+ * Browser-only mocks below run exclusively when `__TAURI_INTERNALS__` is
+ * absent (Vite without the desktop shell). They never execute inside Tauri.
  */
 import type {
   RunConfig, MergeConfig, OpRecord, GuiderRecipe,
   CompatResult, MergeMethod, HfParams, CatalogEntry,
-  ModelDownloadStatus, LocalModelItem,
+  ModelDownloadStatus, LocalModelItem, MoeIndexResult,
 } from './types'
 
 export interface AppSettings {
@@ -52,7 +53,7 @@ export const api = {
     invoke<void>('delete_run', { opId }),
 
   getHardwareInfo: () =>
-    invoke<{ backend: string; vram_mb: number; ram_mb: number }>('get_hardware_info'),
+    invoke<{ backend: string; vram_mb: number | null; ram_mb: number | null }>('get_hardware_info'),
 
   getSettings: () =>
     invoke<AppSettings>('get_settings'),
@@ -72,8 +73,8 @@ export const api = {
   previewDataset: (source: HfParams, rows: number) =>
     invoke<string[][]>('preview_dataset', { source, rows }),
 
-  publishRun: (runOpId: string, repoId: string, isPrivate: boolean, token: string) =>
-    invoke<string>('publish_run', { runOpId, repoId, private: isPrivate, token }),
+  publishRun: (runOpId: string, repoId: string, isPrivate: boolean, token: string, license?: string) =>
+    invoke<string>('publish_run', { runOpId, repoId, private: isPrivate, token, license: license ?? null }),
 
   downloadModel: (repoId: string, purpose: 'inference' | 'finetune' | 'merge', destDir?: string, quant?: string) =>
     invoke<{ op_id: string }>('download_model', { repoId, purpose, destDir: destDir ?? null, quant: quant ?? null }),
@@ -95,6 +96,42 @@ export const api = {
 
   listLocalModels: (customDir?: string) =>
     invoke<LocalModelItem[]>('list_local_models', { customDir: customDir ?? null }),
+
+  buildMoeIndex: (
+    modelPath: string,
+    adapter: string,
+    expertFormat: string,
+    expertRegex?: string,
+  ) =>
+    invoke<MoeIndexResult>('build_moe_index', {
+      modelPath,
+      adapter,
+      expertFormat,
+      expertRegex: expertRegex?.trim() || null,
+    }),
+
+  startChatServer: (
+    modelPath: string,
+    context?: number,
+    vramLimit?: number,
+    cpuKvCache?: boolean,
+  ) =>
+    invoke<boolean>('start_chat_server', {
+      modelPath,
+      context: context ?? null,
+      vramLimit: vramLimit ?? null,
+      cpuKvCache: cpuKvCache ?? null,
+    }),
+
+  stopChatServer: () =>
+    invoke<boolean>('stop_chat_server'),
+
+  planInference: (modelPath: string, context?: number, exportRuntimes?: boolean) =>
+    invoke<Record<string, unknown>>('plan_inference', {
+      modelPath,
+      context: context ?? null,
+      exportRuntimes: exportRuntimes ?? false,
+    }),
 }
 
 // ─── Mock ─────────────────────────────────────────────────────────────────────
@@ -119,6 +156,29 @@ function mockInvoke<T>(cmd: string, _args?: unknown): Promise<T> {
     start_train: 'mock-run-' + Math.random().toString(36).slice(2),
     start_merge: 'mock-merge-' + Math.random().toString(36).slice(2),
     stop_op: undefined,
+    start_chat_server: true,
+    stop_chat_server: true,
+    plan_inference: {
+      compatible: true,
+      backend: 'llama_cpp',
+      reasons: ['GPU-first hybrid plan (browser mock)'],
+      warnings: [],
+      estimates: {
+        architecture: 'qwen3moe',
+        is_moe: true,
+        gpu_layers: 18,
+        peak_vram_mb: 9800,
+        peak_ram_mb: 4200,
+        quantization: 'MOSTLY_Q4_K_M',
+      },
+      command: ['llama-server', '-m', 'model.gguf', '-ngl', '18'],
+    },
+    build_moe_index: {
+      runtime_manifest: '.sytra-runtime.json',
+      experts_indexed: 1024,
+      dense_bytes: 1024,
+      forward_verified: false,
+    },
     delete_run: undefined,
     guider_recommend: [
       {
@@ -148,21 +208,13 @@ function mockInvoke<T>(cmd: string, _args?: unknown): Promise<T> {
     ],
     publish_run: 'mock-publish-' + Math.random().toString(36).slice(2),
     download_model: { op_id: 'mock-dl-' + Math.random().toString(36).slice(2) },
+    cancel_download: true,
+    list_local_models: [],
+    get_download_status: null,
     list_catalog: [
-      { id: 'ggml-org/Kimi-VL-A3B-Thinking-2506-GGUF', name: 'Kimi VL A3B Thinking', size_gb: 9.81, format: 'gguf', tags: ['vision', 'coding', 'thinking'], recommended: true },
-      { id: 'unsloth/Kimi-K2.7-Code-GGUF', name: 'Kimi K2.7 Coder (MoE)', size_gb: 295, format: 'gguf', tags: ['coding', 'moe', 'large'], recommended: false },
-      { id: 'THUDM/glm-5.2-9b-chat', name: 'GLM-5.2 9B Chat', size_gb: 18, format: 'gguf', tags: ['chat', 'multilingual'], recommended: false },
-      { id: 'THUDM/GLM-5.2-744B-MoE-GGUF', name: 'GLM-5.2 744B MoE', size_gb: 370, format: 'gguf', tags: ['moe', 'frontier', 'large'], recommended: false },
-      { id: 'deepseek-ai/DeepSeek-V3-GGUF', name: 'DeepSeek V3 671B MoE', size_gb: 330, format: 'gguf', tags: ['moe', 'coding', 'large'], recommended: false },
-      { id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B-GGUF', name: 'DeepSeek R1 Distill Qwen 14B', size_gb: 9.0, format: 'gguf', tags: ['reasoning', 'quant', 'fast'], recommended: true },
-      { id: 'Qwen/Qwen2.5-Coder-7B-Instruct-GGUF', name: 'Qwen2.5 Coder 7B Instruct', size_gb: 4.7, format: 'gguf', tags: ['coding', 'instruct', 'fast'], recommended: true },
-      { id: 'Qwen/Qwen2.5-3B-Instruct-GGUF', name: 'Qwen2.5 3B Instruct', size_gb: 2.1, format: 'gguf', tags: ['small', 'fast', 'lightweight'], recommended: true },
-      { id: 'microsoft/phi-4-gguf', name: 'Phi-4 14B Instruct', size_gb: 9.1, format: 'gguf', tags: ['reasoning', 'small', 'math'], recommended: true },
-      { id: 'google/gemma-2-9b-it-GGUF', name: 'Gemma-2 9B IT', size_gb: 5.8, format: 'gguf', tags: ['chat', 'general'], recommended: true },
-      { id: 'mistralai/Mixtral-8x22B-Instruct-v0.1-GGUF', name: 'Mixtral 8x22B Instruct', size_gb: 141, format: 'gguf', tags: ['moe', 'multilingual'], recommended: false },
-      { id: 'unsloth/mistral-7b-v0.3-bnb-4bit', name: 'Mistral 7B v0.3 (4-bit)', size_gb: 4.1, format: 'safetensors', tags: ['finetune', '4-bit', 'unsloth'], recommended: true },
-      { id: 'meta-llama/Llama-3.3-70B-Instruct-GGUF', name: 'Llama 3.3 70B Instruct (Q4)', size_gb: 42.5, format: 'gguf', tags: ['quant', 'frontier'], recommended: false },
-      { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF', name: 'SmolLM2 1.7B Instruct', size_gb: 1.1, format: 'gguf', tags: ['small', 'edge', 'fast'], recommended: true },
+      { id: 'Qwen/Qwen2.5-0.5B-Instruct-GGUF', name: 'Qwen2.5 0.5B Instruct GGUF', size_gb: 0.47, format: 'gguf', tags: ['small', 'fast'], recommended: true, downloadable: true, architecture: 'Qwen2ForCausalLM', alert_level: 'none', alerts: [] },
+      { id: 'Qwen/Qwen3.5-9B-Base', name: 'Qwen3.5 9B Base', size_gb: 20, format: 'safetensors', tags: ['multimodal'], recommended: false, downloadable: true, architecture: 'Qwen3_5ForConditionalGeneration', alert_level: 'danger', alerts: [{ level: 'danger', code: 'never_qwen2', message: 'This is Qwen3.5, not Qwen2.', blocks_download: false }] },
+      { id: 'unsloth/Kimi-K2.7-Code-GGUF', name: 'Kimi K2.7 Coder (MoE)', size_gb: 295, format: 'gguf', tags: ['coding', 'moe', 'large'], recommended: false, downloadable: true, alert_level: 'danger', alerts: [{ level: 'danger', code: 'exceeds_hybrid_envelope', message: 'Does not fit a GPU-first hybrid plan on this machine.', blocks_download: false }] },
     ],
   }
   return Promise.resolve((mocks[cmd] ?? null) as T)

@@ -12,6 +12,7 @@
 /.sytra-settings.json
 /runs/
 /unsloth_compiled_cache/
+**/unsloth_compiled_cache/
 **/__pycache__/
 *.egg-info/
 *.py[cod]
@@ -23,7 +24,15 @@
 .DS_Store
 .test-dl/
 .test-download/
+.test-models/
+.tmp-pytest-memory-envelope/
+.tmp-pytest/
+/target-kairos/
+/target-update/
 calls.json
 runner/.hf-cache/
+runner/.pytest_cache/
+/.pytest_cache/
+/.uv-cache/
 /npm/runner/
 /npm/scripts/
