@@ -14,7 +14,7 @@ This section covers Sytra Studio features, requirements, quick installation, and
 - **Verified Local Serving**: Preflight complete checkpoints before launching llama.cpp, vLLM, or Sytra's native MoE runtime. Unsupported formats are refused rather than guessed.
 - **Fine-tuning**: SFT, DPO, ORPO, and CPO using LoRA, QLoRA, or DoRA **require a working CUDA training environment**. Missing CUDA or trainer dependencies is an error, not a simulated run.
 - **Model Merging**: SLERP, Linear, TIES, DARE-TIES, Task Arithmetic, Passthrough, and MoE via mergekit. Missing mergekit is an error, not a fake success.
-- **Data Sources**: Hugging Face datasets and local JSONL (CSV/Parquet in the desktop build). Synthetic generation requires CUDA + transformers. Klayer materialization requires `kl-train` on PATH.
+- **Data Sources**: Hugging Face datasets and local JSONL (CSV/Parquet in the desktop build). Synthetic generation requires CUDA + transformers. Klayer materialization calls the klayer MCP `export_dataset` tool (`npx -y klayer-mcp@latest`, override with `KLAYER_MCP_ARGV`).
 - **Hardware-Aware Assistance**: Compatibility checks and recommendations use **detected** RAM/VRAM. If hardware cannot be detected, operations refuse to start.
 - **Export**: Convert/export scripts run in the provisioned Python env and report real exit status. Hugging Face publish requires `huggingface_hub` and a token.
 
@@ -41,13 +41,13 @@ The easiest way to launch Sytra Studio without manual compilation is using `npx`
 
 ```bash
 # Instant launch Sytra Studio Desktop application
-npx sytra-studio@latest
+npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0
 
 # Launch Sytra MCP server (for Claude Code, Cursor, Codex, etc.)
-npx sytra-studio@latest mcp
+npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 mcp
 
 # Force update / re-download binaries
-npx sytra-studio@latest install
+npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 install
 ```
 
 Alternatively, install globally via `npm`:
@@ -169,11 +169,11 @@ The `sytra-mcp` server exposes tools for model inspection, catalog recommendatio
   ```toml
   [mcp_servers.sytra-studio]
   command = "npx"
-  args = ["-y", "sytra-studio@latest", "mcp"]
+  args = ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
   ```
 - **Claude Code configuration**:
   ```bash
-  claude mcp add sytra-studio -- npx -y sytra-studio@latest mcp
+  claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 mcp
   ```
 - **Cursor / VSCode configuration (`mcp.json` or settings)**:
   ```json
@@ -181,7 +181,7 @@ The `sytra-mcp` server exposes tools for model inspection, catalog recommendatio
     "mcpServers": {
       "sytra-studio": {
         "command": "npx",
-        "args": ["-y", "sytra-studio@latest", "mcp"]
+        "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
       }
     }
   }

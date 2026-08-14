@@ -77,11 +77,11 @@ pub struct SyntheticParams {
     pub topic: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KlayerParams {
-    pub query: String,
-    pub min_trust_tier: String,
-    pub snapshot: String,
+    /// Optional klayer domain. Omit to export every domain via MCP `export_dataset`.
+    #[serde(default)]
+    pub domain: Option<String>,
 }
 
 /// Discriminated union on `source`. The `source` value is also the key

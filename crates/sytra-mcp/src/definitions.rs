@@ -118,7 +118,7 @@ pub fn tool_definitions() -> &'static Value {
         },
         {
             "name": "start_train",
-            "description": "Start a fine-tuning run (LoRA/QLoRA/DoRA; sft/dpo/orpo/cpo). Returns op_id immediately — poll get_run for progress. Only one operation runs at a time. `config` follows the run.yaml contract; unspecified fields get sensible defaults. Minimum: {\"model\": \"<catalog model_id>\", \"data\": {\"source\": \"local\", \"local\": {\"path\": \"data.jsonl\", \"format\": \"jsonl\", \"mapping\": {\"prompt\": \"prompt\", \"completion\": \"completion\"}}}}. Data sources: hf {repo_id, split}, local {path, format, mapping}, synthetic {generator_model, judge_model, mode, count, topic}, klayer {query, min_trust_tier, snapshot}. The output is a LoRA ADAPTER, not a full model — call export_guide for how to merge it and run it in Ollama.",
+            "description": "Start a fine-tuning run (LoRA/QLoRA/DoRA; sft/dpo/orpo/cpo). Returns op_id immediately — poll get_run for progress. Only one operation runs at a time. `config` follows the run.yaml contract; unspecified fields get sensible defaults. Minimum: {\"model\": \"<catalog model_id>\", \"data\": {\"source\": \"local\", \"local\": {\"path\": \"data.jsonl\", \"format\": \"jsonl\", \"mapping\": {\"prompt\": \"prompt\", \"completion\": \"completion\"}}}}. Data sources: hf {repo_id, split}, local {path, format, mapping}, synthetic {generator_model, judge_model, mode, count, topic}, klayer {domain} (MCP export_dataset; omit domain to export all reviewed+user rows). The output is a LoRA ADAPTER, not a full model — call export_guide for how to merge it and run it in Ollama.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

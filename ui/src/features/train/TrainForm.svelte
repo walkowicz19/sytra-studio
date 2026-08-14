@@ -56,11 +56,9 @@
           topic: first.synthTopic
         }
       } else if (first.source === 'klayer') {
-        sourceObj.klayer = {
-          query: first.klayerQuery,
-          min_trust_tier: first.klayerMinTrust,
-          snapshot: first.klayerSnapshot
-        }
+        sourceObj.klayer = first.klayerDomain.trim()
+          ? { domain: first.klayerDomain.trim() }
+          : {}
       }
     } else {
       sourceObj = { source: trainFormStore.dataSplitSource }
@@ -89,11 +87,9 @@
           topic: trainFormStore.synthTopic
         }
       } else if (trainFormStore.dataSplitSource === 'klayer') {
-        sourceObj.klayer = {
-          query: trainFormStore.klayerQuery,
-          min_trust_tier: trainFormStore.klayerMinTrust,
-          snapshot: trainFormStore.klayerSnapshot
-        }
+        sourceObj.klayer = trainFormStore.klayerDomain.trim()
+          ? { domain: trainFormStore.klayerDomain.trim() }
+          : {}
       }
     }
 
@@ -164,11 +160,9 @@
               topic: ds.synthTopic
             }
           } else if (ds.source === 'klayer') {
-            itemSpec.klayer = {
-              query: ds.klayerQuery,
-              min_trust_tier: ds.klayerMinTrust,
-              snapshot: ds.klayerSnapshot
-            }
+            itemSpec.klayer = ds.klayerDomain.trim()
+              ? { domain: ds.klayerDomain.trim() }
+              : {}
           }
           return itemSpec
         })
@@ -204,11 +198,9 @@
           topic: trainFormStore.synthTopic
         }
       } else if (trainFormStore.dataSplitSource === 'klayer') {
-        dataSpec.klayer = {
-          query: trainFormStore.klayerQuery,
-          min_trust_tier: trainFormStore.klayerMinTrust,
-          snapshot: trainFormStore.klayerSnapshot
-        }
+        dataSpec.klayer = trainFormStore.klayerDomain.trim()
+          ? { domain: trainFormStore.klayerDomain.trim() }
+          : {}
       }
     }
 
@@ -423,20 +415,8 @@
                   {:else if ds.source === 'klayer'}
                     <div class="grid-2">
                       <div class="field col-2">
-                        <label class="field-label" for="klayer-query-{ds.id}">Klayer SQL Query</label>
-                        <input id="klayer-query-{ds.id}" class="input input-mono" bind:value={ds.klayerQuery} />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="klayer-trust-{ds.id}">Min Trust Tier</label>
-                        <select id="klayer-trust-{ds.id}" class="select" bind:value={ds.klayerMinTrust}>
-                          <option value="tier-1">Tier 1 (highest)</option>
-                          <option value="tier-2">Tier 2</option>
-                          <option value="tier-3">Tier 3</option>
-                        </select>
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="klayer-snapshot-{ds.id}">Snapshot</label>
-                        <input id="klayer-snapshot-{ds.id}" class="input input-mono" bind:value={ds.klayerSnapshot} />
+                        <label class="field-label" for="klayer-domain-{ds.id}">Klayer domain (MCP export_dataset)</label>
+                        <input id="klayer-domain-{ds.id}" class="input input-mono" bind:value={ds.klayerDomain} placeholder="Leave empty to export every domain" />
                       </div>
                     </div>
                   {/if}
@@ -536,16 +516,8 @@
             {:else if trainFormStore.dataSplitSource === 'klayer'}
               <div class="grid-2">
                 <div class="field col-2">
-                  <label class="field-label" for="input-klayer-query">Klayer Query</label>
-                  <input id="input-klayer-query" class="input input-mono" bind:value={trainFormStore.klayerQuery} />
-                </div>
-                <div class="field">
-                  <label class="field-label" for="input-klayer-trust">Minimum Trust Tier</label>
-                  <input id="input-klayer-trust" class="input" bind:value={trainFormStore.klayerMinTrust} placeholder="tier-2" />
-                </div>
-                <div class="field">
-                  <label class="field-label" for="input-klayer-snapshot">Snapshot Hash</label>
-                  <input id="input-klayer-snapshot" class="input input-mono" bind:value={trainFormStore.klayerSnapshot} />
+                  <label class="field-label" for="input-klayer-domain">Klayer domain (MCP export_dataset)</label>
+                  <input id="input-klayer-domain" class="input input-mono" bind:value={trainFormStore.klayerDomain} placeholder="Leave empty to export every reviewed+user domain" />
                 </div>
               </div>
             {/if}

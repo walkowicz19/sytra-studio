@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "sytra-studio": {
-      "command": "target-build/release/sytra-mcp.exe",
-      "args": [],
-      "env": {}
+      "command": "npx",
+      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
     }
   }
 }

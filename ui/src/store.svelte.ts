@@ -298,9 +298,7 @@ export interface DatasetItem {
   synthMode: 'prompts' | 'sft' | 'dpo';
   synthCount: number;
   synthTopic: string;
-  klayerQuery: string;
-  klayerMinTrust: string;
-  klayerSnapshot: string;
+  klayerDomain: string;
 }
 
 export function createDefaultDatasetItem(source: 'hf' | 'local' | 'synthetic' | 'klayer' = 'hf'): DatasetItem {
@@ -320,9 +318,7 @@ export function createDefaultDatasetItem(source: 'hf' | 'local' | 'synthetic' | 
     synthMode: 'sft',
     synthCount: 100,
     synthTopic: 'machine learning',
-    klayerQuery: 'select lessons from code',
-    klayerMinTrust: 'tier-2',
-    klayerSnapshot: 'v1',
+    klayerDomain: '',
   };
 }
 
@@ -357,9 +353,7 @@ export const trainFormStore = $state({
   synthTopic: 'machine learning',
 
   // Klayer Params
-  klayerQuery: 'select lessons from code',
-  klayerMinTrust: 'tier-2',
-  klayerSnapshot: 'v1',
+  klayerDomain: '',
 
   // Adapter params
   adapterKind: 'lora' as AdapterType,

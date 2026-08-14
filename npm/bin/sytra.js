@@ -7,10 +7,11 @@ const https = require('https');
 const { spawn } = require('child_process');
 
 const VERSION = '1.2.0';
+const RELEASE_TAG = '1.2.0';
 const REPO = 'walkowicz19/sytra-studio';
 
 const USAGE = `
-Sytra Studio CLI Installer & Runner (v${VERSION})
+Sytra Studio CLI Installer & Runner (${VERSION})
 
 Usage:
   sytra         - Launch Sytra Studio Desktop application (downloads binaries if missing)
@@ -19,7 +20,6 @@ Usage:
   sytra help    - Show this help message
 `;
 
-// Parse command line arguments
 const args = process.argv.slice(2);
 const command = args[0] || 'gui';
 
@@ -28,7 +28,6 @@ if (command === 'help' || command === '--help' || command === '-h') {
   process.exit(0);
 }
 
-// Map process.platform to binary platform folder
 const platformMap = {
   win32: 'windows',
   darwin: 'macos',
@@ -41,39 +40,48 @@ if (!platform) {
   process.exit(1);
 }
 
-// Executable names
 const exeName = platform === 'windows' ? 'sytra-studio.exe' : 'sytra-studio';
 const mcpExeName = platform === 'windows' ? 'sytra-mcp.exe' : 'sytra-mcp';
 
-// Local user directory directories
 const sytraDir = path.join(os.homedir(), '.sytra');
 const binDir = path.join(sytraDir, 'bin');
 const runnerDir = path.join(sytraDir, 'runner');
 const scriptsDir = path.join(sytraDir, 'scripts');
+const versionFile = path.join(binDir, 'VERSION');
 
 const studioPath = path.join(binDir, exeName);
 const mcpPath = path.join(binDir, mcpExeName);
 
-// Helper function to download a file atomically with redirect support
+function installedVersion() {
+  try {
+    return fs.readFileSync(versionFile, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function firstExistingDir(candidates) {
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate));
+}
+
 function downloadFile(url, destPath) {
   const tmpPath = `${destPath}.tmp`;
   return new Promise((resolve, reject) => {
     function get(requestUrl) {
       https.get(requestUrl, (response) => {
-        // Handle HTTP Redirects
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
           get(response.headers.location);
           return;
         }
-        
+
         if (response.statusCode !== 200) {
           reject(new Error(`Failed to download from ${requestUrl}. Status Code: ${response.statusCode}`));
           return;
         }
-        
+
         const file = fs.createWriteStream(tmpPath);
         response.pipe(file);
-        
+
         file.on('finish', () => {
           file.close(() => {
             try {
@@ -90,12 +98,11 @@ function downloadFile(url, destPath) {
         reject(err);
       });
     }
-    
+
     get(url);
   });
 }
 
-// Synchronously copy directory recursively
 function copyDirSync(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -112,38 +119,52 @@ function copyDirSync(src, dest) {
   }
 }
 
+async function downloadBinary(fileName, destPath) {
+  const urls = [
+    `https://raw.githubusercontent.com/${REPO}/${RELEASE_TAG}/binaries/${platform}/${fileName}`,
+    `https://raw.githubusercontent.com/${REPO}/main/binaries/${platform}/${fileName}`,
+  ];
+  let lastError;
+  for (const url of urls) {
+    try {
+      await downloadFile(url, destPath);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
 async function installBinaries() {
-  console.log(`Preparing Sytra installation directory under ${sytraDir}...`);
+  console.log(`Preparing Sytra ${VERSION} under ${sytraDir}...`);
   fs.mkdirSync(binDir, { recursive: true });
   fs.mkdirSync(runnerDir, { recursive: true });
   fs.mkdirSync(scriptsDir, { recursive: true });
 
-  // 1. Copy python runner & scripts from npm package source files
-  const packageRunner = path.join(__dirname, '..', 'runner');
-  const packageScripts = path.join(__dirname, '..', 'scripts');
-  
-  if (fs.existsSync(packageRunner)) {
+  const packageRunner = firstExistingDir([
+    path.join(__dirname, '..', 'runner'),
+    path.join(__dirname, '..', '..', 'runner'),
+  ]);
+  const packageScripts = firstExistingDir([
+    path.join(__dirname, '..', 'scripts'),
+    path.join(__dirname, '..', '..', 'runner', 'scripts'),
+    path.join(__dirname, '..', '..', 'scripts'),
+  ]);
+
+  if (packageRunner) {
     console.log('Deploying Python runner scripts...');
     copyDirSync(packageRunner, runnerDir);
   }
-  
-  if (fs.existsSync(packageScripts)) {
+
+  if (packageScripts) {
     console.log('Deploying supporting scripts...');
     copyDirSync(packageScripts, scriptsDir);
   }
 
-  // 2. Download executables from Git raw files under tag v1.2.0 (with main fallback)
-  const baseUrl = `https://raw.githubusercontent.com/${REPO}/v1.2.0/binaries/${platform}`;
-  const fallbackUrl = `https://raw.githubusercontent.com/${REPO}/main/binaries/${platform}`;
-
-  console.log(`Downloading Sytra Studio Desktop (${platform})...`);
+  console.log(`Downloading Sytra Studio Desktop (${platform}) from tag ${RELEASE_TAG}...`);
   try {
-    try {
-      await downloadFile(`${baseUrl}/${exeName}`, studioPath);
-    } catch {
-      await downloadFile(`${fallbackUrl}/${exeName}`, studioPath);
-    }
-    // Mark as executable on macOS/Linux
+    await downloadBinary(exeName, studioPath);
     if (platform !== 'windows') {
       fs.chmodSync(studioPath, 0o755);
     }
@@ -153,14 +174,9 @@ async function installBinaries() {
     process.exit(1);
   }
 
-  console.log(`Downloading Sytra MCP Server (${platform})...`);
+  console.log(`Downloading Sytra MCP Server (${platform}) from tag ${RELEASE_TAG}...`);
   try {
-    try {
-      await downloadFile(`${baseUrl}/${mcpExeName}`, mcpPath);
-    } catch {
-      await downloadFile(`${fallbackUrl}/${mcpExeName}`, mcpPath);
-    }
-    // Mark as executable on macOS/Linux
+    await downloadBinary(mcpExeName, mcpPath);
     if (platform !== 'windows') {
       fs.chmodSync(mcpPath, 0o755);
     }
@@ -170,11 +186,13 @@ async function installBinaries() {
     process.exit(1);
   }
 
-  console.log('\nInstallation completed successfully!');
+  fs.writeFileSync(versionFile, VERSION, 'utf8');
+  console.log(`\nInstallation completed successfully (${VERSION}).`);
 }
 
 async function run() {
-  let needsInstall = !fs.existsSync(studioPath) || !fs.existsSync(mcpPath);
+  const staleVersion = installedVersion() !== VERSION;
+  let needsInstall = command === 'install' || staleVersion || !fs.existsSync(studioPath) || !fs.existsSync(mcpPath);
   if (!needsInstall) {
     try {
       if (fs.statSync(studioPath).size < 1000000 || fs.statSync(mcpPath).size < 1000000) {
@@ -184,27 +202,25 @@ async function run() {
       needsInstall = true;
     }
   }
-  
-  if (command === 'install' || needsInstall) {
+
+  if (needsInstall) {
     await installBinaries();
     if (command === 'install') {
       process.exit(0);
     }
   }
 
-  // Setup SYTRA_WORKSPACE pointing to the .sytra directory in the user's home
   const env = { ...process.env, SYTRA_WORKSPACE: sytraDir };
 
   if (command === 'mcp') {
-    console.error(`Starting Sytra MCP Server from ${mcpPath}...`);
+    console.error(`Starting Sytra MCP Server ${VERSION} from ${mcpPath}...`);
     const child = spawn(mcpPath, [], { env, stdio: 'inherit' });
-    
+
     child.on('close', (code) => {
       process.exit(code || 0);
     });
   } else {
     console.log(`Launching Sytra Studio Desktop from ${studioPath}...`);
-    // For GUI, run detached and exit parent process so terminal remains free
     const child = spawn(studioPath, [], {
       env,
       detached: true,
