@@ -2,7 +2,7 @@
   "mcpServers": {
     "sytra-studio": {
       "command": "npx",
-      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
     }
   }
 }

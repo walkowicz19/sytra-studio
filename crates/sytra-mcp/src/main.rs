@@ -240,9 +240,9 @@ impl Server {
             "train_mode": "sft",
             "backend": { "kind": "auto", "judge_model": null },
             "adapter": {
-                "type": "lora", "rank": 16, "alpha": 32, "dropout": 0.05,
+                "type": "qlora", "rank": 16, "alpha": 32, "dropout": 0.05,
                 "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"],
-                "quant_bits": null
+                "quant_bits": 4
             },
             "optim": {
                 "learning_rate": 2.0e-4, "schedule": "cosine", "warmup_steps": 20,

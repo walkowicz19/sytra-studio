@@ -8,6 +8,13 @@ from pathlib import Path
 # Add runner/ directory to sys.path so sytra_runner can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Lower CPU scheduling priority on Unix (Linux & macOS) so desktop UI remains responsive
+if hasattr(os, "nice"):
+    try:
+        os.nice(10)
+    except OSError:
+        pass
+
 from sytra_runner.fast_downloader import FastHFDownloader
 
 def download_model_fast(

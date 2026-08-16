@@ -89,7 +89,24 @@ impl JobRunner {
                 crate::settings::AppSettings::load(&self.workspace_root)
                     .effective_hf_cache(&self.workspace_root),
             )
-            .env("PYTHONPATH", self.workspace_root.join("runner"));
+            .env("PYTHONPATH", self.workspace_root.join("runner"))
+            .env("OMP_NUM_THREADS", "4")
+            .env("MKL_NUM_THREADS", "4")
+            .env("OPENBLAS_NUM_THREADS", "4")
+            .env("VECLIB_MAXIMUM_THREADS", "4")
+            .env("NUMEXPR_NUM_THREADS", "4")
+            .env("TOKENIZERS_PARALLELISM", "false")
+            .env("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+            .env("CUDA_MANAGED_FORCE_DEVICE_ALLOC", "1")
+            .env("HF_XET_HIGH_PERFORMANCE", "0")
+            .env("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
+            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
 
         #[cfg(not(target_os = "windows"))]
         {

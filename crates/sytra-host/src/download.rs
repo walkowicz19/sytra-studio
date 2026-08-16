@@ -140,7 +140,22 @@ impl DownloadService {
                 cmd.arg("--dest").arg(dest);
             }
         }
-        cmd.current_dir(&self.workspace);
+        cmd.env("HF_XET_HIGH_PERFORMANCE", "0")
+            .env("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824")
+            .current_dir(&self.workspace);
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
+            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
 
         let mut child = cmd
             .spawn()

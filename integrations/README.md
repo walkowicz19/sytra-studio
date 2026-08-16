@@ -57,10 +57,10 @@ One operation runs at a time. `start_*` returns immediately; agents poll
 
 Already configured: the repo's [`.mcp.json`](../.mcp.json) registers the
 server at project scope, so opening this folder in Claude Code is enough.
-From anywhere else (tag **1.2.0**, not `v1.2.0`):
+From anywhere else:
 
 ```
-claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 mcp
+claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-studio mcp
 ```
 
 ## Cursor
@@ -72,7 +72,7 @@ claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-s
   "mcpServers": {
     "sytra-studio": {
       "command": "npx",
-      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
     }
   }
 }
@@ -85,7 +85,7 @@ claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-s
 ```toml
 [mcp_servers.sytra-studio]
 command = "npx"
-args = ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+args = ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
 ```
 
 ## Antigravity
@@ -97,7 +97,7 @@ Settings → MCP Servers → Add server (raw config):
   "mcpServers": {
     "sytra-studio": {
       "command": "npx",
-      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
     }
   }
 }

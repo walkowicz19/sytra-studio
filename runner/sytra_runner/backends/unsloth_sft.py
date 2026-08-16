@@ -86,12 +86,18 @@ def run_real_training(config: RunConfig) -> int:
     # Heavy imports deferred to execution time. unsloth MUST come first —
     # it patches transformers/trl at import time.
     try:
+        import gc
         import unsloth  # noqa: F401  (must precede transformers)
         from unsloth import FastLanguageModel
 
         import torch
         from datasets import load_dataset
         from transformers import TrainerCallback, TrainingArguments
+
+        # Clamp CPU thread pool to avoid 100% CPU thread starvation on Windows
+        threads = min(4, max(1, (os.cpu_count() or 4) - 2))
+        torch.set_num_threads(threads)
+        torch.set_num_interop_threads(min(2, threads))
     except ImportError as exc:
         telemetry.emit_error(f"Failed to import ML dependencies: {exc}", traceback.format_exc())
         return 1
@@ -196,6 +202,16 @@ def run_real_training(config: RunConfig) -> int:
         max_seq_len = 2048
         telemetry.emit_event("vram_override", {"reason": "low_vram", "max_seq_len": 2048})
 
+    def _empty_device_caches() -> None:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache") and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+    # Clear memory caches before heavy load
+    _empty_device_caches()
+
     # 1. Load model and tokenizer via Unsloth. Downloading + loading can be
     # minutes of dead air, so wrap it in stage events and a heartbeat: the
     # UI keeps receiving lines and never mistakes the download for a hang.
@@ -207,6 +223,8 @@ def run_real_training(config: RunConfig) -> int:
             dtype=None,  # auto detect
             load_in_4bit=load_in_4bit,
         )
+
+    _empty_device_caches()
 
     if load_in_4bit:
         is_4bit = bool(getattr(model, "is_loaded_in_4bit", False))
@@ -254,6 +272,8 @@ def run_real_training(config: RunConfig) -> int:
         random_state=3407,
         max_seq_length=max_seq_len,
     )
+    _empty_device_caches()
+
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_params = sum(p.numel() for p in model.parameters())
     if trainable_params == 0:

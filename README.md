@@ -41,13 +41,13 @@ The easiest way to launch Sytra Studio without manual compilation is using `npx`
 
 ```bash
 # Instant launch Sytra Studio Desktop application
-npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0
+npx -y --prefer-online github:walkowicz19/sytra-studio
 
 # Launch Sytra MCP server (for Claude Code, Cursor, Codex, etc.)
-npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 mcp
+npx -y --prefer-online github:walkowicz19/sytra-studio mcp
 
 # Force update / re-download binaries
-npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 install
+npx -y --prefer-online github:walkowicz19/sytra-studio install
 ```
 
 Alternatively, install globally via `npm`:
@@ -169,11 +169,11 @@ The `sytra-mcp` server exposes tools for model inspection, catalog recommendatio
   ```toml
   [mcp_servers.sytra-studio]
   command = "npx"
-  args = ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+  args = ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
   ```
 - **Claude Code configuration**:
   ```bash
-  claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-studio#1.2.0 mcp
+  claude mcp add sytra-studio -- npx -y --prefer-online github:walkowicz19/sytra-studio mcp
   ```
 - **Cursor / VSCode configuration (`mcp.json` or settings)**:
   ```json
@@ -181,7 +181,7 @@ The `sytra-mcp` server exposes tools for model inspection, catalog recommendatio
     "mcpServers": {
       "sytra-studio": {
         "command": "npx",
-        "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio#1.2.0", "mcp"]
+        "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
       }
     }
   }

@@ -137,16 +137,17 @@ class _DownloadProgress:
         completed_bytes = 0
         with self._lock:
             completed = set(self.completed)
+            active = set(self.active)
         sizes = {item.name: item.size for item in self.files}
         for name in completed:
             expected = sizes.get(name)
             path = self.target_dir / name
             completed_bytes += expected if expected is not None else (path.stat().st_size if path.exists() else 0)
 
-        if include_incomplete:
-            cache_dir = self.target_dir / ".cache" / "huggingface" / "download"
-            if cache_dir.exists():
-                for path in cache_dir.rglob("*.incomplete"):
+        if include_incomplete and active:
+            for name in active:
+                path = self.target_dir / name
+                if path.exists():
                     try:
                         completed_bytes += path.stat().st_size
                     except OSError:
@@ -202,7 +203,7 @@ class _DownloadProgress:
             self.progress_cb(downloaded, self.total)
 
     def _run(self) -> None:
-        while not self._stop.wait(0.5):
+        while not self._stop.wait(1.0):
             self._write("downloading", self._downloaded_bytes())
 
 
@@ -226,12 +227,12 @@ class FastHFDownloader:
         self.repo_dir = self.cache_dir / "hub" / f"models--{repo_id.replace('/', '--')}"
         self._resolved_revision: str | None = None
 
-        # hf-xet already parallelizes chunks. High-performance mode lets it use
-        # the available network and NVMe bandwidth without Sytra reimplementing
-        # the transport protocol.
+        # Configure safe Hugging Face and Xet transfer defaults.
+        # High performance mode is disabled to prevent buffer bloat and system lockups on consumer systems.
         os.environ.setdefault("HF_HOME", str(self.cache_dir.resolve()))
         os.environ.setdefault("HF_XET_CACHE", str((self.cache_dir / "xet").resolve()))
-        os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
+        os.environ["HF_XET_HIGH_PERFORMANCE"] = "0"
+        os.environ.setdefault("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824")
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
     @property
