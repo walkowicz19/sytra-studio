@@ -41,7 +41,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Frontend Dependencies
         run: |
@@ -97,6 +97,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: main
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download Windows Binaries
@@ -133,10 +135,20 @@ jobs:
           # Clean temp files
           rm -rf temp-binaries
 
+      - name: Rebase with latest main
+        run: |
+          git pull --rebase origin main || true
+
       - name: Commit and Push Binaries
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          branch: main
           commit_message: "chore: update release binaries for Windows, macOS, and Linux [skip ci]"
           file_pattern: "binaries/**"
           commit_user_name: "github-actions[bot]"
           commit_user_email: "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update Release Tag
+        run: |
+          git tag -f 1.2.0
+          git push origin 1.2.0 --force
