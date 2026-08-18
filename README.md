@@ -11,7 +11,7 @@ This section covers Sytra Studio features, requirements, quick installation, and
 ## Features
 
 - **Model Hub & Importer**: Scan local models, download commit-pinned GGUF or SafeTensors checkpoints through Hugging Face Xet with resumption and verification, and convert local SafeTensors/PyTorch weights to GGUF. The catalog is the shared Guider catalog used by both the desktop UI and MCP.
-- **Verified Local Serving**: Preflight complete checkpoints before launching llama.cpp, vLLM, or Sytra's native MoE runtime. Unsupported formats are refused rather than guessed.
+- **Verified Local Serving**: Preflight complete checkpoints before launching llama.cpp (GGUF), vLLM (fitting SafeTensors), Sytra's native MoE runtime (indexed containers with a forward kernel), or Colibri (`coli serve` for disk-streamed GLM-5.2, Kimi K3, Inkling, and OLMoE safetensors). Unsupported formats are refused rather than guessed.
 - **Fine-tuning**: SFT, DPO, ORPO, and CPO using LoRA, QLoRA, or DoRA **require a working CUDA training environment**. Missing CUDA or trainer dependencies is an error, not a simulated run.
 - **Model Merging**: SLERP, Linear, TIES, DARE-TIES, Task Arithmetic, Passthrough, and MoE via mergekit. Missing mergekit is an error, not a fake success.
 - **Data Sources**: Hugging Face datasets and local JSONL (CSV/Parquet in the desktop build). Synthetic generation requires CUDA + transformers. Klayer materialization calls the klayer MCP `export_dataset` tool (`npx -y klayer-mcp@latest`, override with `KLAYER_MCP_ARGV`).
@@ -83,10 +83,37 @@ This CLI installer automatically handles downloading pre-compiled release binari
 
 ### Verified inference backends
 
+Routing is decided from the checkpoint, not the filename:
+
+| Artifact | Backend |
+|---|---|
+| Standalone GGUF | llama.cpp (`llama-server`) |
+| Complete SafeTensors that fit GPU or GPU+RAM | vLLM |
+| Indexed `.sytra-runtime.json` with a native forward kernel | `sytra-engine` |
+| GLM-5.2, Kimi K3, Inkling, or OLMoE safetensors | Colibri (`coli serve --auto-tier`) |
+
 - GGUF files are served by `llama-server`, with llama.cpp selecting GPU layers automatically and retaining a CPU/GPU hybrid fallback when the model exceeds VRAM.
 - Complete SafeTensors model directories use vLLM when they fit the conservative GPU budget, or vLLM's UVA CPU-weight offload when they fit the configured GPU+RAM budget. MoE offload targets expert tensors and multi-GPU MoE plans enable expert parallelism.
 - Native out-of-core containers use `sytra-engine`, a Sytra-owned Rust runtime. Its shared core provides immutable multi-span expert indexes, deterministic weighted storage mirrors, byte-exact reads with fallback, RAM and accelerator LRU/heat tiers, lease-safe accelerator eviction, batch-union loading, and bounded asynchronous prefetch.
-- Frontier disk-streamed MoE that Colibri actually serves (GLM-5.2, Kimi K3, Inkling, OLMoE safetensors) is handed to `coli serve --auto-tier`. Sytra unpacks a pinned Colibri release into `.tools/colibri` on first `plan_inference` / `serve_model --backend colibri`, and on `auto` for those families. Do not send GGUF to Colibri. Install ahead of time with `python runner/scripts/provision_colibri.py --project-root .`. Set `SYTRA_SKIP_COLIBRI_PROVISION=1` to disable the download, or `SYTRA_COLIBRI_COMMAND` / `SYTRA_COLIBRI_HOME` to use an existing install. On Windows the launcher is a Python script (`python coli serve ...`); the engine binary sits next to it.
+
+#### Colibri (disk-streamed frontier MoE)
+
+Sytra owns catalog, download, and the VRAM/RAM/NVMe envelope. [Colibri](https://github.com/JustVugg/colibri) owns token generation for the families it actually serves. **Do not send GGUF to `coli`.** Kimi K2.7 Code stays on `sytra-engine`; it is not a Colibri model.
+
+On first `plan_inference` / `serve_model --backend colibri` (and on `--backend auto` for those families), Sytra unpacks a pinned Colibri release into gitignored `.tools/colibri`. No Rust rebuild is required. On a 12 GB GPU, frontier MoE decode is expected well below 5 tok/s; the planner warns instead of implying a 5 tok/s claim.
+
+```bash
+# Optional: install coli ahead of time (Windows zip / Linux+macOS tarball, SHA256-pinned)
+python runner/scripts/provision_colibri.py --project-root .
+
+python runner/scripts/plan_inference.py --model /models/glm52_i4 --backend auto --project-root .
+python runner/scripts/serve_model.py --model /models/glm52_i4 --backend colibri --dry-run --project-root .
+```
+
+Overrides: `SYTRA_COLIBRI_COMMAND`, `SYTRA_COLIBRI_HOME`, `SYTRA_SKIP_COLIBRI_PROVISION=1`. On Windows the launcher is a Python script next to `colibri.exe` (`python .tools/colibri/coli serve ...`). MCP running from `~/.sytra` will not see a checkout `.tools/` unless you set `SYTRA_SOURCE_ROOT` to that checkout (or copy `runner/` into the MCP workspace).
+
+#### Native sytra-engine
+
 - Native memory limits are hard envelopes rather than cache hints: runtime reserve, compact BF16 KV state, dense-tensor working buffers, active expert leases, and hot caches are budgeted together. Evicted-but-live host leases and every CUDA allocation remain counted, routed batches execute in byte-bounded expert waves, oversized matrices stream in row tiles, and context length is reduced instead of overcommitting memory. The planner includes BF16-to-FP32 CPU expansion and simultaneous CUDA input/output buffers in peak staging estimates. Standard MHA/GQA adapters can keep planner-sized BF16 K/V allocations on CUDA and use a bounded two-pass attention kernel; the cache stays in RAM when preserving expert residency is the better fit. MLA adapters retain their separate compact-latent path.
 - The performance path supports exact greedy speculative verification. A small draft model can propose multiple positions while the large MoE verifies them as one batch, amortizing dense-weight reads; adaptive lookahead is capped by the active memory envelope.
 - `sytra-engine plan` reports conservative cold-decode and perfect-acceptance I/O ceilings from the indexed dense/expert byte ranges, bounded cache allocation, verification batch, and measured drive bandwidth. `--target-tps 5 --storage-bandwidth-mbps 3500` shows the minimum bandwidth needed and explicitly rejects an I/O throughput claim before compute, PCIe, draft-model, and tokenizer costs are considered.
@@ -187,6 +214,7 @@ The `sytra-mcp` server exposes tools for model inspection, catalog recommendatio
     }
   }
   ```
+  `plan_inference` uses the MCP workspace's `runner/` copy. To use llama.cpp / Colibri binaries from a git checkout, set `SYTRA_SOURCE_ROOT` to that checkout in the server `env` (and keep `runner/` in sync if you need the Colibri planner itself).
 
 ---
 
@@ -201,7 +229,8 @@ This section is intended for developers who want to compile, modify, or test Syt
 - `crates/sytra-contracts/` — Shared data contracts for run configurations, telemetry, and guider lineage.
 - `crates/sytra-host/` — Rust orchestration layer, resource guards, validation, and subprocess management.
 - `crates/sytra-mcp/` — Stdio MCP server wiring.
-- `runner/` — Python execution environments (PyTorch, TRL, MergeKit) and telemetry emitters.
+- `runner/` — Python execution environments (PyTorch, TRL, MergeKit), inference planner (`plan_inference.py` / `serve_model.py`), and Colibri provisioner.
+- `.tools/` — Gitignored local binaries (`llama.cpp`, `colibri`). Not part of the release tag.
 - `npm/` — Global Node.js CLI packaging scripts.
 - `binaries/` — Release-ready cross-platform binaries.
 
