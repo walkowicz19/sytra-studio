@@ -1,6 +1,15 @@
 from pathlib import Path
 
-from sytra_runner.runtime_detect import find_llama_server, find_lm_studio, find_ollama, prepend_runtime_path
+from sytra_runner.runtime_detect import (
+    extra_runtime_roots,
+    find_colibri,
+    find_llama_server,
+    find_lm_studio,
+    find_ollama,
+    find_sytra_engine,
+    prepend_runtime_path,
+    project_roots,
+)
 from sytra_runner.serve_ports import port_in_use, require_free_port
 from sytra_runner.model_planner import ModelCompatibilityError, inspect_model, build_backend_plan
 from gguf_test_file import write_metadata_gguf
@@ -13,6 +22,80 @@ def test_find_llama_server_in_tools_release(tmp_path, monkeypatch):
     exe.write_bytes(b"fake")
     found = find_llama_server(tmp_path)
     assert found == [str(exe.resolve())]
+
+
+def test_project_roots_includes_source_root_env(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setenv("SYTRA_SOURCE_ROOT", str(checkout))
+    monkeypatch.delenv("SYTRA_WORKSPACE", raising=False)
+    roots = project_roots(tmp_path / "workspace")
+    assert checkout.resolve() in roots
+    assert extra_runtime_roots()[0].resolve() == checkout.resolve()
+
+
+def test_find_llama_server_searches_extra_roots(tmp_path, monkeypatch):
+    monkeypatch.delenv("SYTRA_LLAMA_SERVER", raising=False)
+    source = tmp_path / "checkout"
+    exe = source / ".tools" / "llama.cpp" / "build" / "bin" / "Release" / "llama-server.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fake")
+    monkeypatch.setattr(
+        "sytra_runner.runtime_detect.project_roots",
+        lambda project_root=None: [source],
+    )
+    found = find_llama_server(tmp_path)
+    assert found == [str(exe.resolve())]
+
+
+def test_find_sytra_engine_in_target_build_debug(tmp_path, monkeypatch):
+    monkeypatch.delenv("SYTRA_ENGINE_COMMAND", raising=False)
+    monkeypatch.delenv("SYTRA_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("SYTRA_WORKSPACE", raising=False)
+    exe = tmp_path / "target-build" / "debug" / "sytra-engine.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fake")
+    found = find_sytra_engine(tmp_path)
+    assert found == [str(exe.resolve())]
+
+
+def test_find_colibri_in_tools_and_home_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("SYTRA_COLIBRI_COMMAND", raising=False)
+    home = tmp_path / "colibri-home"
+    exe = home / "coli.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    monkeypatch.setenv("SYTRA_COLIBRI_HOME", str(home))
+    found = find_colibri(tmp_path)
+    assert found == [str(exe.resolve())]
+
+
+def test_find_colibri_wraps_python_launcher(tmp_path, monkeypatch):
+    monkeypatch.delenv("SYTRA_COLIBRI_COMMAND", raising=False)
+    monkeypatch.delenv("SYTRA_COLIBRI_HOME", raising=False)
+    monkeypatch.setattr("sytra_runner.runtime_detect.shutil.which", lambda name: None)
+    monkeypatch.setattr(
+        "sytra_runner.runtime_detect.project_roots",
+        lambda project_root=None: [tmp_path],
+    )
+    script = tmp_path / ".tools" / "colibri" / "coli"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env python3\nprint('coli')\n", encoding="utf-8")
+    found = find_colibri(tmp_path)
+    assert found is not None
+    assert found[-1] == str(script.resolve())
+    assert found[0].lower().endswith("python.exe") or "python" in Path(found[0]).name.lower()
+
+
+def test_prepend_runtime_path_uses_coli_dir_not_python(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", "C:\\Windows\\System32")
+    script = tmp_path / "coli"
+    script.write_text("print('x')\n", encoding="utf-8")
+    env = prepend_runtime_path(
+        {"PATH": "C:\\Windows\\System32"},
+        ["C:\\Python\\python.exe", str(script)],
+    )
+    assert env["PATH"].startswith(str(script.parent))
 
 
 def test_prepend_runtime_path_puts_dll_dir_first(tmp_path, monkeypatch):

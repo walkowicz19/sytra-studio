@@ -270,3 +270,26 @@ def plan_llama_cpp_offload(
         strategy=strategy,
         notes=tuple(notes),
     )
+
+
+def estimate_streamed_moe_tps(
+    *,
+    nvme_weight_bytes: int,
+    n_expert: int | None,
+    n_expert_used: int | None,
+    storage_bandwidth_mbps: int,
+) -> float | None:
+    """Upper-bound decode tok/s if cold experts must cross NVMe every token.
+
+    Returns None when nothing is placed on disk, so RAM/VRAM-resident plans are
+    not falsely treated as I/O-bound.
+    """
+    if nvme_weight_bytes <= 0 or storage_bandwidth_mbps <= 0:
+        return None
+    if n_expert and n_expert_used and n_expert > 0:
+        per_token = nvme_weight_bytes * n_expert_used / n_expert
+    else:
+        per_token = nvme_weight_bytes * 0.02
+    if per_token <= 0:
+        return None
+    return (storage_bandwidth_mbps * 1_000_000.0) / per_token

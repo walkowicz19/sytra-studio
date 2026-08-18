@@ -8,6 +8,9 @@ launches a mature OpenAI-compatible server:
   or a conservative GPU+RAM UVA-offload budget.
 * Sytra's native runtime for explicitly indexed, architecture-validated
   VRAM/RAM/NVMe MoE containers.
+* Colibri (`coli serve --auto-tier`) for frontier disk-streamed MoE (GLM-5.2,
+  Kimi K3, Inkling, OLMoE safetensors). Sytra unpacks a pinned `coli` release
+  into `.tools/colibri` on that path when the launcher is missing.
 """
 from __future__ import annotations
 
@@ -30,17 +33,34 @@ from .architecture_adapters import (
     validate_adapter_payload,
 )
 from .gguf_meta import try_read_gguf_metadata
-from .runtime_detect import find_llama_server
+from .colibri_bridge import (
+    COLIBRI_PREFERRED_FAMILIES,
+    COLIBRI_STREAMING_FLOOR_TPS,
+    build_colibri_preflight_command,
+    build_colibri_serve_command,
+    colibri_install_hint,
+    colibri_model_id,
+    colibri_resource_plan,
+    detect_colibri_family,
+)
+from .colibri_provision import maybe_provision_colibri
+from .runtime_detect import (
+    find_colibri,
+    find_llama_server,
+    find_sytra_engine,
+    llama_server_provision_hint,
+)
 from .memory_hierarchy import (
     KVCachePlan,
     LlamaCppOffloadPlan,
     WeightPlacementPlan,
     estimate_kv_cache,
+    estimate_streamed_moe_tps,
     plan_llama_cpp_offload,
     plan_weight_placement,
 )
 
-BackendName = Literal["llama_cpp", "vllm", "sytra_moe"]
+BackendName = Literal["llama_cpp", "vllm", "sytra_moe", "colibri"]
 
 
 @dataclass(frozen=True)
@@ -396,29 +416,7 @@ def _find_vllm() -> list[str] | None:
 
 
 def _find_sytra_engine(project_root: Path | None = None) -> list[str] | None:
-    override = _command_override("SYTRA_ENGINE_COMMAND")
-    if override:
-        return override
-    executable = shutil.which("sytra-engine") or shutil.which("sytra-engine.exe")
-    if executable:
-        return [executable]
-
-    roots = [project_root] if project_root else []
-    roots.extend([Path.cwd(), Path(__file__).resolve().parents[2]])
-    candidates = (
-        Path("target-build/release/sytra-engine.exe"),
-        Path("target-build/debug/sytra-engine.exe"),
-        Path("target/release/sytra-engine"),
-        Path("target/debug/sytra-engine"),
-    )
-    for root in roots:
-        if root is None:
-            continue
-        for suffix in candidates:
-            candidate = root / suffix
-            if candidate.is_file():
-                return [str(candidate.resolve())]
-    return None
+    return find_sytra_engine(project_root)
 
 
 def _system_memory_mb() -> int:
@@ -520,7 +518,7 @@ def build_backend_plan(
     reasons: list[str] = []
     warnings: list[str] = []
     requested_backend = backend.strip().lower()
-    if requested_backend not in {"auto", "llama_cpp", "vllm", "sytra_moe"}:
+    if requested_backend not in {"auto", "llama_cpp", "vllm", "sytra_moe", "colibri"}:
         raise ModelCompatibilityError(f"Unknown inference backend: {backend!r}")
 
     root = Path(project_root).resolve() if project_root else None
@@ -543,8 +541,36 @@ def build_backend_plan(
         adapter_by_id(artifact.adapter_id) if artifact.adapter_id else None
     )
 
+    coli_launcher = find_colibri(root)
+    colibri_family = detect_colibri_family(
+        adapter_family=adapter.family if adapter else None,
+        adapter_id=artifact.adapter_id,
+        model_type=artifact.model_type,
+        architecture=artifact.architecture,
+        repo_id=artifact.repo_id,
+    )
+    if coli_launcher is None:
+        coli_launcher = maybe_provision_colibri(
+            root,
+            requested_backend=requested_backend,
+            colibri_family=colibri_family,
+        )
+    native_engine = _find_sytra_engine(root)
+
     if artifact.format == "gguf":
         automatic: BackendName = "llama_cpp"
+    elif (
+        artifact.format == "sytra_moe"
+        and native_engine is not None
+        and (adapter is None or adapter.family not in COLIBRI_PREFERRED_FAMILIES)
+    ):
+        automatic = "sytra_moe"
+    elif coli_launcher and (
+        colibri_family
+        or artifact.format == "sytra_moe"
+        or (artifact.is_moe and native_engine is None)
+    ):
+        automatic = "colibri"
     elif artifact.format == "sytra_moe":
         automatic = "sytra_moe"
     else:
@@ -553,9 +579,9 @@ def build_backend_plan(
 
     if artifact.format == "gguf" and selected != "llama_cpp":
         raise ModelCompatibilityError("Standalone GGUF checkpoints use llama_cpp")
-    if artifact.format == "sytra_moe" and selected != "sytra_moe":
+    if artifact.format == "sytra_moe" and selected not in {"sytra_moe", "colibri"}:
         raise ModelCompatibilityError(
-            "A native out-of-core container must use Sytra's native MoE runtime"
+            "A native out-of-core container must use Sytra's native MoE runtime or the Colibri bridge"
         )
     if selected == "sytra_moe" and (
         adapter is None or adapter.engine != "sytra_moe"
@@ -570,7 +596,7 @@ def build_backend_plan(
         context_tokens=context,
         dtype=kv_cache_quant,
         cpu_cache=cpu_kv_cache,
-        persistent=selected == "sytra_moe",
+        persistent=selected in {"sytra_moe", "colibri"},
         tier="engine-managed" if selected == "sytra_moe" else None,
     )
     gpu_memory = _visible_gpu_memory_mb()
@@ -584,8 +610,8 @@ def build_backend_plan(
         vram_budget_mb=vram_limit_mb,
         ram_budget_mb=ram_budget_mb,
         tensor_parallel_size=tensor_parallel,
-        allow_cpu_offload=selected in {"llama_cpp", "vllm", "sytra_moe"},
-        allow_nvme_streaming=selected == "sytra_moe",
+        allow_cpu_offload=selected in {"llama_cpp", "vllm", "sytra_moe", "colibri"},
+        allow_nvme_streaming=selected in {"sytra_moe", "colibri"},
     )
 
     weight_mb = (artifact.size_bytes + 1024**2 - 1) // 1024**2
@@ -594,6 +620,26 @@ def build_backend_plan(
         if selected == "vllm"
         else None
     )
+    if (
+        selected == "vllm"
+        and requested_backend == "auto"
+        and placement.strategy == "insufficient-memory"
+        and coli_launcher
+        and (colibri_family or artifact.is_moe)
+    ):
+        selected = "colibri"
+        warnings.append(
+            "Checkpoint exceeds the vLLM GPU+RAM envelope; Sytra hands token generation to Colibri."
+        )
+        placement = plan_weight_placement(
+            weight_bytes=artifact.size_bytes,
+            vram_budget_mb=vram_limit_mb,
+            ram_budget_mb=ram_budget_mb,
+            tensor_parallel_size=tensor_parallel,
+            allow_cpu_offload=True,
+            allow_nvme_streaming=True,
+        )
+        required_vram_mb = None
     command: list[str] = []
     preflight_command: list[str] = []
     compatible = True
@@ -643,10 +689,7 @@ def build_backend_plan(
             )
         if launcher is None:
             compatible = False
-            reasons.append(
-                "llama-server was not found. Build the bundled .tools/llama.cpp server, "
-                "install llama.cpp on PATH, or set SYTRA_LLAMA_SERVER."
-            )
+            reasons.append(llama_server_provision_hint(root))
         elif offload.strategy == "insufficient-memory":
             compatible = False
             command = []
@@ -718,7 +761,9 @@ def build_backend_plan(
             reasons.append(
                 f"Checkpoint needs approximately {required_vram_mb} MiB before runtime overhead, "
                 f"but the conservative GPU+RAM budget is {vram_limit_mb + ram_budget_mb} MiB. "
-                "No verified NVMe adapter matches this architecture."
+                "No verified NVMe adapter matches this architecture. "
+                "If Colibri (`coli`) is installed, retry with --backend colibri; otherwise "
+                "build sytra-engine and create a .sytra-runtime.json index."
             )
         if launcher is not None and compatible:
             command = launcher + [
@@ -760,21 +805,27 @@ def build_backend_plan(
             warnings.append(
                 "CPU KV-cache placement is not forced on vLLM; vLLM owns its paged KV-cache policy."
             )
-    else:
-        assert selected == "sytra_moe" and adapter is not None
+    elif selected == "sytra_moe":
+        assert adapter is not None
         launcher = _find_sytra_engine(root)
         try:
             validate_adapter_payload(artifact.model_path, adapter)
         except AdapterCompatibilityError as exc:
             compatible = False
             reasons.append(str(exc))
-        if launcher is None:
+        if launcher is None and requested_backend == "auto" and compatible and find_colibri(root):
+            selected = "colibri"
+            warnings.append(
+                "Native sytra-engine was not found; planning a Colibri (`coli serve`) bridge instead."
+            )
+        elif launcher is None:
             compatible = False
             reasons.append(
                 "Sytra's native engine was not found. Build `cargo build -p sytra-engine "
-                "--release`, install sytra-engine on PATH, or set SYTRA_ENGINE_COMMAND."
+                "--release`, install sytra-engine on PATH, set SYTRA_ENGINE_COMMAND, "
+                "or install Colibri (`coli`) and pass --backend colibri."
             )
-        if launcher is not None and compatible:
+        if selected == "sytra_moe" and launcher is not None and compatible:
             command = launcher + [
                 "serve",
                 "--model",
@@ -839,6 +890,70 @@ def build_backend_plan(
                     "The native architecture adapter controls KV placement; the generic CPU-KV switch is ignored."
                 )
 
+    if selected == "colibri":
+        launcher = coli_launcher or find_colibri(root)
+        coli_model = os.environ.get("COLI_MODEL") or artifact.model_path
+        served_id = colibri_model_id(
+            repo_id=artifact.repo_id,
+            family=colibri_family,
+            architecture=artifact.architecture,
+        )
+        if launcher is None:
+            compatible = False
+            command = []
+            reasons.append(colibri_install_hint(root))
+        elif compatible:
+            command = build_colibri_serve_command(
+                launcher,
+                model_path=coli_model,
+                host=host,
+                port=port,
+                context=context,
+                vram_limit_mb=vram_limit_mb,
+                ram_limit_mb=ram_budget_mb,
+                gpu_visible=bool(gpu_memory),
+                model_id=served_id,
+            )
+            preflight_command = build_colibri_preflight_command(
+                launcher, model_path=coli_model
+            )
+            reasons.append(
+                "Sytra handles catalog, download, and the VRAM/RAM/NVMe envelope; "
+                "Colibri (`coli serve --auto-tier`) streams experts and generates tokens. "
+                "On a 12 GB GPU expect well below 5 tok/s for frontier MoE — see estimates.io_max_tps."
+            )
+
+    io_max_tps = estimate_streamed_moe_tps(
+        nvme_weight_bytes=placement.estimated_nvme_weight_bytes,
+        n_expert=artifact.n_expert,
+        n_expert_used=artifact.n_expert_used,
+        storage_bandwidth_mbps=storage_bandwidth_mbps,
+    )
+    if io_max_tps is not None and selected in {"sytra_moe", "colibri"} and compatible:
+        if io_max_tps < COLIBRI_STREAMING_FLOOR_TPS:
+            compatible = False
+            command = []
+            reasons.append(
+                f"Storage bandwidth {storage_bandwidth_mbps} MB/s bounds streamed MoE decode at "
+                f"about {io_max_tps:.3f} tok/s, below Colibri's proven floor "
+                f"({COLIBRI_STREAMING_FLOOR_TPS:g} tok/s). This host cannot stream this checkpoint."
+            )
+        elif io_max_tps < target_tps:
+            if selected == "sytra_moe":
+                compatible = False
+                command = []
+                reasons.append(
+                    f"Storage bandwidth {storage_bandwidth_mbps} MB/s bounds streamed MoE decode at "
+                    f"about {io_max_tps:.3f} tok/s, below --target-tps {target_tps:g}. "
+                    "Lower --target-tps, raise measured --storage-bandwidth-mbps, or use a smaller model. "
+                    f"Sytra will not claim {target_tps:g} tok/s on this envelope."
+                )
+            else:
+                warnings.append(
+                    f"Colibri I/O math caps decode around {io_max_tps:.3f} tok/s, below "
+                    f"--target-tps {target_tps:g}. Serving anyway; this is not a 5 tok/s claim."
+                )
+
     kv_snapshots = {}
     for ctx in (2048, 4096, 8192):
         snap = estimate_kv_cache(
@@ -846,7 +961,7 @@ def build_backend_plan(
             context_tokens=ctx,
             dtype=kv_cache_quant,
             cpu_cache=cpu_kv_cache,
-            persistent=selected == "sytra_moe",
+            persistent=selected in {"sytra_moe", "colibri"},
         )
         kv_snapshots[f"kv_{ctx // 1024}k_mb"] = (
             None if snap.estimated_bytes is None else (snap.estimated_bytes + 1024**2 - 1) // 1024**2
@@ -870,6 +985,26 @@ def build_backend_plan(
         "architecture": artifact.architecture,
         "is_moe": artifact.is_moe,
         "runtime_version": runtime_version,
+        "io_max_tps": io_max_tps,
+        "target_tps": target_tps,
+        "storage_bandwidth_mbps": storage_bandwidth_mbps,
+        "colibri_resource_plan": colibri_resource_plan(
+            vram_limit_mb=vram_limit_mb,
+            ram_limit_mb=ram_budget_mb,
+            nvme_weight_bytes=placement.estimated_nvme_weight_bytes,
+            storage_bandwidth_mbps=storage_bandwidth_mbps,
+            target_tps=target_tps,
+            strategy=placement.strategy,
+            io_max_tps=io_max_tps,
+            family=colibri_family,
+            model_id=colibri_model_id(
+                repo_id=artifact.repo_id,
+                family=colibri_family,
+                architecture=artifact.architecture,
+            ),
+        )
+        if selected == "colibri"
+        else None,
     }
 
     return BackendPlan(

@@ -130,6 +130,9 @@ def _write_runtime_manifest(
 def test_complete_safetensors_model_uses_vllm(tmp_path, monkeypatch):
     model = _write_safetensors_model(tmp_path / "model", payload_padding_mb=2)
     monkeypatch.setenv("SYTRA_VLLM_COMMAND", "fake-vllm")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(model, vram_limit_mb=2048)
 
@@ -142,6 +145,9 @@ def test_complete_safetensors_model_uses_vllm(tmp_path, monkeypatch):
 def test_vllm_rejects_checkpoint_that_exceeds_budget(tmp_path, monkeypatch):
     model = _write_safetensors_model(tmp_path / "model", payload_padding_mb=2)
     monkeypatch.setenv("SYTRA_VLLM_COMMAND", "fake-vllm")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(model, vram_limit_mb=1, ram_limit_mb=0)
 
@@ -160,6 +166,9 @@ def test_incomplete_safetensors_model_fails_before_launch(tmp_path):
 def test_vllm_uses_cpu_uva_for_model_that_fits_combined_memory(tmp_path, monkeypatch):
     model = _write_safetensors_model(tmp_path / "model", payload_padding_mb=2)
     monkeypatch.setenv("SYTRA_VLLM_COMMAND", "fake-vllm")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(model, vram_limit_mb=1, ram_limit_mb=2048)
 
@@ -189,6 +198,9 @@ def test_kimi_k3_indexed_checkpoint_routes_to_native_sytra(tmp_path, monkeypatch
     (model / "tokenizer.json").write_text("{}", encoding="utf-8")
     _write_runtime_manifest(model, "sytra-kimi-k3", "kimi_k3")
     monkeypatch.setenv("SYTRA_ENGINE_COMMAND", "fake-sytra-engine")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(
         model,
@@ -221,6 +233,9 @@ def test_unknown_oversized_moe_is_not_guessed_into_native_sytra(tmp_path, monkey
     model = _write_safetensors_model(tmp_path / "unknown", payload_padding_mb=2)
     monkeypatch.setenv("SYTRA_VLLM_COMMAND", "fake-vllm")
     monkeypatch.setenv("SYTRA_ENGINE_COMMAND", "fake-sytra-engine")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(model, vram_limit_mb=1, ram_limit_mb=0)
 
@@ -252,6 +267,9 @@ def test_explicit_glm_native_container_is_inspected_without_safetensors(tmp_path
     (model / "out-layer-00.bin").write_bytes(b"weights")
     _write_runtime_manifest(model, "sytra-glm52", "glm_moe_dsa", "out-layer-00.bin")
     monkeypatch.setenv("SYTRA_ENGINE_COMMAND", "fake-sytra-engine")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner.find_colibri", lambda project_root=None: None
+    )
 
     plan = build_backend_plan(model, vram_limit_mb=1024, ram_limit_mb=2048)
 
@@ -326,4 +344,125 @@ def test_gguf_that_exceeds_ram_cap_is_rejected(tmp_path, monkeypatch):
     assert not plan.compatible
     assert plan.command == []
     assert any("exceed" in reason.lower() or "envelope" in reason.lower() for reason in plan.reasons)
+
+
+def test_colibri_backend_maps_resource_plan(tmp_path, monkeypatch):
+    model = _write_safetensors_model(tmp_path / "moe", payload_padding_mb=2)
+    monkeypatch.setenv("SYTRA_COLIBRI_COMMAND", "fake-coli")
+    monkeypatch.setenv("COLI_MODEL", str(model))
+
+    plan = build_backend_plan(
+        model,
+        backend="colibri",
+        vram_limit_mb=1,
+        ram_limit_mb=2048,
+        storage_bandwidth_mbps=3500,
+        target_tps=5.0,
+    )
+
+    assert plan.backend == "colibri"
+    assert plan.command[:2] == ["fake-coli", "serve"]
+    assert "--model" in plan.command
+    assert "--auto-tier" in plan.command
+    assert "--ctx" in plan.command
+    assert plan.preflight_command[:2] == ["fake-coli", "doctor"]
+    assert plan.estimates is not None
+    resource = plan.estimates["colibri_resource_plan"]
+    assert resource["vram_mb"] == 1
+    assert resource["ram_mb"] == 2048
+    assert resource["auto_tier"] is True
+    assert resource["colibri_role"] == "serve-streamed-experts"
+
+
+def test_native_missing_engine_falls_back_to_colibri(tmp_path, monkeypatch):
+    model = _write_safetensors_model(
+        tmp_path / "kimi",
+        config={
+            "model_type": "kimi_k3",
+            "architectures": ["KimiK3ForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "moe_intermediate_size": 4,
+            "n_routed_experts": 8,
+            "num_experts_per_tok": 2,
+            "kv_lora_rank": 16,
+            "qk_rope_head_dim": 8,
+        },
+        payload_padding_mb=2,
+    )
+    (model / "tokenizer.json").write_text("{}", encoding="utf-8")
+    _write_runtime_manifest(model, "sytra-kimi-k3", "kimi_k3")
+    monkeypatch.delenv("SYTRA_ENGINE_COMMAND", raising=False)
+    monkeypatch.setenv("SYTRA_COLIBRI_COMMAND", "fake-coli")
+    monkeypatch.setattr(
+        "sytra_runner.model_planner._find_sytra_engine",
+        lambda project_root=None: None,
+    )
+
+    plan = build_backend_plan(model, vram_limit_mb=1024, ram_limit_mb=2048)
+
+    assert plan.backend == "colibri"
+    assert plan.compatible
+    assert plan.command[:2] == ["fake-coli", "serve"]
+    assert any("Colibri" in text for text in plan.reasons + plan.warnings)
+
+
+def test_streamed_moe_rejects_unsustainable_target_tps(tmp_path, monkeypatch):
+    model = _write_safetensors_model(tmp_path / "moe", payload_padding_mb=8)
+    monkeypatch.setenv("SYTRA_COLIBRI_COMMAND", "fake-coli")
+
+    plan = build_backend_plan(
+        model,
+        backend="colibri",
+        vram_limit_mb=1,
+        ram_limit_mb=1,
+        storage_bandwidth_mbps=1,
+        target_tps=50.0,
+    )
+
+    assert plan.backend == "colibri"
+    assert plan.compatible
+    assert plan.command[:2] == ["fake-coli", "serve"]
+    assert any("not a 5 tok/s claim" in warning for warning in plan.warnings)
+    assert plan.estimates is not None
+    assert plan.estimates["io_max_tps"] is not None
+    assert plan.estimates["io_max_tps"] < 50.0
+
+
+def test_glm_safetensors_auto_hands_off_to_colibri(tmp_path, monkeypatch):
+    model = _write_safetensors_model(
+        tmp_path / "glm",
+        config={
+            "model_type": "glm_moe_dsa",
+            "architectures": ["GlmForCausalLM"],
+            "num_hidden_layers": 4,
+            "hidden_size": 8,
+            "n_routed_experts": 8,
+            "num_experts_per_tok": 2,
+        },
+        payload_padding_mb=2,
+    )
+    monkeypatch.setenv("SYTRA_COLIBRI_COMMAND", "fake-coli")
+    monkeypatch.delenv("SYTRA_ENGINE_COMMAND", raising=False)
+    monkeypatch.delenv("SYTRA_VLLM_COMMAND", raising=False)
+
+    plan = build_backend_plan(model, vram_limit_mb=10240, ram_limit_mb=16326)
+
+    assert plan.backend == "colibri"
+    assert plan.compatible
+    assert "--auto-tier" in plan.command
+    assert "--gpu" in plan.command
+    assert plan.command[plan.command.index("--model-id") + 1] == "glm-5.2-colibri"
+    assert any("Colibri" in reason for reason in plan.reasons)
+
+
+def test_vllm_envelope_miss_auto_calls_colibri(tmp_path, monkeypatch):
+    model = _write_safetensors_model(tmp_path / "mixtral", payload_padding_mb=4)
+    monkeypatch.setenv("SYTRA_COLIBRI_COMMAND", "fake-coli")
+    monkeypatch.setenv("SYTRA_VLLM_COMMAND", "fake-vllm")
+
+    plan = build_backend_plan(model, vram_limit_mb=1, ram_limit_mb=1)
+
+    assert plan.backend == "colibri"
+    assert any("hands token generation to Colibri" in warning for warning in plan.warnings)
 

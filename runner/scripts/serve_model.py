@@ -25,13 +25,13 @@ logger = logging.getLogger("sytra.serve_model")
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Capability-gated launcher for llama.cpp, vLLM, or Sytra's native MoE runtime"
+            "Capability-gated launcher for llama.cpp, vLLM, Sytra's native MoE runtime, or Colibri (`coli serve`)"
         )
     )
     parser.add_argument("--model", required=True, help="Exact GGUF file or complete Safetensors model directory")
     parser.add_argument(
         "--backend",
-        choices=("auto", "llama_cpp", "vllm", "sytra_moe"),
+        choices=("auto", "llama_cpp", "vllm", "sytra_moe", "colibri"),
         default="auto",
     )
     parser.add_argument("--vram-limit", type=int, default=8192, help="Aggregate serving VRAM budget in MiB")
