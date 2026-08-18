@@ -85,7 +85,7 @@ Sytra picks the backend from the files on disk:
 
 GGUF never goes to Colibri. Kimi K2.7 Code uses the Sytra engine, not Colibri.
 
-The first time you plan or serve a Colibri model, Sytra installs Colibri automatically. If you already have it, set `SYTRA_COLIBRI_COMMAND` or `SYTRA_COLIBRI_HOME`. Frontier MoE on a 12 GB GPU is expected well below 5 tok/s; Sytra reports that instead of promising 5 tok/s.
+The first time you plan or serve a Colibri model, Sytra installs Colibri automatically from the [Colibri releases](https://github.com/JustVugg/colibri/releases). You can also download those binaries yourself, or run `python runner/scripts/provision_colibri.py`. If Colibri is already installed, set `SYTRA_COLIBRI_COMMAND` or `SYTRA_COLIBRI_HOME`. Frontier MoE on a 12 GB GPU is expected well below 5 tok/s; Sytra reports that instead of promising 5 tok/s.
 
 From the command line:
 
@@ -93,8 +93,6 @@ From the command line:
 python runner/scripts/plan_inference.py --model /path/to/model --backend auto
 python runner/scripts/serve_model.py --model /path/to/model --backend auto
 ```
-
-Optional: `python runner/scripts/provision_colibri.py` to install Colibri ahead of time.
 
 If llama.cpp, vLLM, the Sytra engine, or Colibri is not on `PATH`, set `SYTRA_LLAMA_SERVER`, `SYTRA_VLLM_COMMAND`, `SYTRA_ENGINE_COMMAND`, or `SYTRA_COLIBRI_COMMAND`.
 
@@ -217,7 +215,8 @@ cd ui && npm run check
 
 ## Credits
 
-UI layout is inspired by [MLX-LoRA-Studio](https://github.com/Goekdeniz-Guelmez/MLX-LoRA-Studio) by Gökdeniz Gülmez.
+- UI layout is inspired by [MLX-LoRA-Studio](https://github.com/Goekdeniz-Guelmez/MLX-LoRA-Studio) by Gökdeniz Gülmez.
+- Disk-streamed MoE serving for GLM-5.2, Kimi K3, Inkling, and OLMoE uses [Colibri](https://github.com/JustVugg/colibri) by JustVugg. Download engine builds from [Colibri releases](https://github.com/JustVugg/colibri/releases).
 
 ## License
 
