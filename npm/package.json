@@ -1,6 +1,6 @@
 {
   "name": "sytra-studio",
-  "version": "1.2.0",
+  "version": "1.2.0-fix",
   "description": "Rapid CLI installer and runner for Sytra Studio (desktop UI and MCP server)",
   "main": "bin/sytra.js",
   "bin": {

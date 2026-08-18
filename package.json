@@ -1,6 +1,6 @@
 {
   "name": "sytra-studio",
-  "version": "1.2.0",
+  "version": "1.2.0-fix",
   "description": "Sytra Studio CLI and MCP launcher. npx github:walkowicz19/sytra-studio mcp downloads the latest release binaries.",
   "bin": {
     "sytra": "npm/bin/sytra.js"

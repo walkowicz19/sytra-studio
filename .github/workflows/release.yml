@@ -150,5 +150,5 @@ jobs:
 
       - name: Update Release Tag
         run: |
-          git tag -f 1.2.0
-          git push origin 1.2.0 --force
+          git tag -f 1.2.0-fix
+          git push origin 1.2.0-fix --force
