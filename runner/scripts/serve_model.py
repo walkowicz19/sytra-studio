@@ -4,16 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sytra_runner.xet_safety import apply_runtime_safety, child_process_env
 from sytra_runner.model_planner import ModelCompatibilityError, build_backend_plan
 from sytra_runner.runtime_detect import prepend_runtime_path
 from sytra_runner.serve_ports import require_free_port
+
+apply_runtime_safety()
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -124,7 +126,9 @@ def main(argv: list[str] | None = None) -> int:
     if plan.preflight_command and (not args.dry_run or args.verify_engine):
         logger.info("Running %s architecture preflight", plan.backend)
         try:
-            checked = subprocess.run(plan.preflight_command, env=os.environ.copy(), check=False)
+            checked = subprocess.run(
+                plan.preflight_command, env=child_process_env(), check=False
+            )
         except OSError as exc:
             logger.error("Could not run %s preflight: %s", plan.backend, exc)
             return 3
@@ -151,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     for warning in plan.warnings:
         logger.warning(warning)
 
-    env = prepend_runtime_path(os.environ.copy(), plan.command)
+    env = prepend_runtime_path(child_process_env(), plan.command)
     try:
         completed = subprocess.run(plan.command, env=env, check=False)
     except OSError as exc:

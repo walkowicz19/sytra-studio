@@ -136,6 +136,7 @@ impl Server {
 
     fn tool_get_status(&self) -> Result<Value, String> {
         let current = *self.current_op.lock().unwrap();
+        let envs = EnvProvisioner::new(&self.workspace).status_report();
         Ok(json!({
             "running": self.runner.is_running(),
             "current_op_id": current.map(|u| u.to_string()),
@@ -143,6 +144,7 @@ impl Server {
             "vram_mb": BackendResolver::detect_system_vram_mb(),
             "ram_mb": BackendResolver::detect_system_ram_mb(),
             "workspace": self.workspace.display().to_string(),
+            "envs": envs,
         }))
     }
 

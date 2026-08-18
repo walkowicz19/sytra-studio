@@ -79,3 +79,12 @@ def test_rejects_task_vector_method_without_base_model():
     }
     with pytest.raises(ConfigError, match="base_model"):
         MergeConfig.from_dict(raw)
+
+
+def test_mergekit_memory_flags_stay_out_of_core():
+    from sytra_runner.merge import mergekit_memory_flags
+
+    flags = mergekit_memory_flags()
+    assert "--lazy-unpickle" in flags
+    assert "--low-cpu-memory" in flags
+    assert flags[flags.index("--out-shard-size") + 1] == "1B"

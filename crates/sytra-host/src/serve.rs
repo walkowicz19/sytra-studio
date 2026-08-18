@@ -86,6 +86,8 @@ impl ChatServer {
         }
 
         let mut preflight = std::process::Command::new(&python);
+        crate::apply_xet_safety(&mut preflight);
+        crate::apply_desktop_priority(&mut preflight);
         preflight.args(&server_args);
         preflight
             .args(["--dry-run", "--verify-engine"])
@@ -113,6 +115,8 @@ impl ChatServer {
 
         thread::spawn(move || {
             let mut cmd = std::process::Command::new(&python_launch);
+            crate::apply_xet_safety(&mut cmd);
+            crate::apply_desktop_priority(&mut cmd);
             cmd.args(&launch_args);
             cmd.current_dir(&workspace);
             match cmd.spawn() {

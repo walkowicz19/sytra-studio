@@ -49,6 +49,9 @@ pub fn python_executable(workspace: &Path) -> PathBuf {
         }
     }
     let provisioner = EnvProvisioner::new(workspace);
+    if provisioner.is_download_provisioned() {
+        return provisioner.download_python_path();
+    }
     if provisioner.is_merge_provisioned() {
         return provisioner.merge_python_path();
     }

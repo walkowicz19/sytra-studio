@@ -41,7 +41,10 @@ const FORMATS: &[&str] = &[
 fn run_script(workspace: &Path, script_name: &str, args: &[&str]) -> Result<std::process::Output, String> {
     let script = workspace.join("runner").join("scripts").join(script_name);
     let python = python_executable(workspace);
-    let output = Command::new(python)
+    let mut cmd = Command::new(python);
+    crate::apply_xet_safety(&mut cmd);
+    crate::apply_desktop_priority(&mut cmd);
+    let output = cmd
         .arg(script)
         .args(args)
         .current_dir(workspace)

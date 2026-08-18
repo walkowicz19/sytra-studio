@@ -21,6 +21,9 @@ pub fn run() {
 
     let env_provisioner = sytra_host::EnvProvisioner::new(&workspace);
     std::thread::spawn(move || {
+        if let Err(err) = env_provisioner.provision_download() {
+            eprintln!("download env provision failed: {err}");
+        }
         if let Err(err) = env_provisioner.provision_merge() {
             eprintln!("merge env provision failed: {err}");
         }

@@ -131,6 +131,8 @@ fn handshake_lists_tools_and_answers_calls() {
     let parsed: Value = serde_json::from_str(text).unwrap();
     assert!(parsed["backend"].is_string());
     assert_eq!(parsed["running"], false);
+    assert_eq!(parsed["envs"]["refuses_system_python"], true);
+    assert_eq!(parsed["envs"]["schema"], 2);
 
     let settings = client.call_tool("get_settings", json!({}));
     assert_eq!(settings["result"]["isError"], false);

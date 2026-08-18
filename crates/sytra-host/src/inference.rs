@@ -21,6 +21,8 @@ pub fn plan_inference(
     let runner = workspace.join("runner");
     let mut cmd = Command::new(python);
     cmd.env("PYTHONPATH", &runner);
+    crate::apply_xet_safety(&mut cmd);
+    crate::apply_desktop_priority(&mut cmd);
     cmd.arg(&script)
         .arg("--model")
         .arg(model)

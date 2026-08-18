@@ -42,22 +42,11 @@ impl JobRunner {
     pub fn start(&self, op: &Operation) -> Result<mpsc::Receiver<TelemetryLine>> {
         let runner_cmd = op.runner_cmd();
 
-        // Resolve python executable path depending on operation type
+        // Isolated Sytra venvs only. PATH Python is commonly polluted by
+        // other AI tools and is the Windows freeze path during Hub downloads.
         let python_path = match op {
-            Operation::Train(_) => {
-                if self.env_provisioner.is_train_provisioned() {
-                    self.env_provisioner.train_python_path()
-                } else {
-                    PathBuf::from("python")
-                }
-            }
-            Operation::Merge(_) | Operation::Publish(_) => {
-                if self.env_provisioner.is_merge_provisioned() {
-                    self.env_provisioner.merge_python_path()
-                } else {
-                    PathBuf::from("python")
-                }
-            }
+            Operation::Train(_) => self.env_provisioner.ensure_train()?,
+            Operation::Merge(_) | Operation::Publish(_) => self.env_provisioner.ensure_merge()?,
         };
 
         let mut cmd = Command::new(python_path);
@@ -98,21 +87,9 @@ impl JobRunner {
             .env("TOKENIZERS_PARALLELISM", "false")
             .env("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
             .env("CUDA_MANAGED_FORCE_DEVICE_ALLOC", "1")
-            .env("HF_XET_HIGH_PERFORMANCE", "0")
-            .env("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824");
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
-            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
+            ;
+        crate::apply_xet_safety(&mut cmd);
+        crate::apply_desktop_priority(&mut cmd);
 
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
 

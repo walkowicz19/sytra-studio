@@ -13,6 +13,9 @@ from typing import Any
 
 from . import telemetry
 from .config import MergeConfig
+from .xet_safety import apply_runtime_safety, child_process_env
+
+apply_runtime_safety()
 
 # Check if mergekit is installed
 try:
@@ -181,33 +184,23 @@ def estimate_model_params(model_ref: str) -> float:
 
 def configure_safety_limits(model_refs: list[str]) -> tuple[int, dict[str, str]]:
     cores, ram_gb = get_system_resources()
-    
-    # 1. Determine priority class and thread caps
-    if ram_gb <= 16.5: # Severe control (8-16 GB)
-        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+
+    # Always stay below the desktop compositor. High-RAM machines still
+    # page if Xet or mergekit over-commits; NORMAL priority made that freeze
+    # the UI on Linux and macOS as well as Windows.
+    apply_runtime_safety()
+    if ram_gb <= 16.5:
         threads = min(2, cores)
         category = "Severe Control (8-16GB RAM)"
-    elif ram_gb <= 32.5: # Strict control (32 GB)
-        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+    elif ram_gb <= 32.5:
         threads = min(4, max(2, cores // 2))
         category = "Strict Control (32GB RAM)"
-    elif ram_gb <= 64.5: # Balanced control (64 GB)
-        priority = 0x00004000 # BELOW_NORMAL_PRIORITY_CLASS
+    elif ram_gb <= 64.5:
         threads = min(8, max(4, cores - 2))
         category = "Balanced Control (64GB RAM)"
-    else: # High performance (> 64 GB)
-        priority = 0x00000020 # NORMAL_PRIORITY_CLASS
-        threads = max(4, cores - 1)
-        category = "High Performance (>64GB RAM)"
-
-    # Set priority for current process
-    import sys
-    if sys.platform == "win32":
-        import ctypes
-        try:
-            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), priority)
-        except Exception:
-            pass
+    else:
+        threads = min(8, max(4, cores - 1))
+        category = "Capped threads (>64GB RAM)"
 
     # Create thread environment dictionary
     env_vars = {
@@ -256,9 +249,11 @@ def configure_safety_limits(model_refs: list[str]) -> tuple[int, dict[str, str]]
 
 def _merge_lora_adapter(adapter_path: str, base_model: str, output_path: str):
     import gc
+    import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
-    
+
+    apply_runtime_safety()
     configure_safety_limits([base_model, adapter_path])
     
     telemetry.emit_log(f"Merging LoRA adapter {adapter_path} into base model {base_model}...", stream="stdout")
@@ -275,7 +270,7 @@ def _merge_lora_adapter(adapter_path: str, base_model: str, output_path: str):
     gc.collect()
     
     os.makedirs(output_path, exist_ok=True)
-    model.save_pretrained(output_path, safe_serialization=True, max_shard_size="2GB")
+    model.save_pretrained(output_path, safe_serialization=True, max_shard_size="1GB")
     
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.save_pretrained(output_path)
@@ -351,6 +346,16 @@ def mergekit_cmd() -> list[str]:
     return [sys.executable, "-m", "mergekit.scripts.run_yaml"]
 
 
+def mergekit_memory_flags() -> list[str]:
+    """Keep mergekit from mapping entire checkpoints into RAM on any OS."""
+    return [
+        "--lazy-unpickle",
+        "--low-cpu-memory",
+        "--out-shard-size",
+        "1B",
+    ]
+
+
 def run_real_merge(config: MergeConfig, config_path: str) -> int:
     """Execute real mergekit merge using mergekit-yaml CLI."""
     import re
@@ -379,21 +384,14 @@ def run_real_merge(config: MergeConfig, config_path: str) -> int:
     telemetry.emit_event("stage", {"stage": state["stage"]})
     telemetry.emit_metric(progress=state["progress"], stage=state["stage"])
 
-    env = dict(os.environ)
-    env["PYTHONUNBUFFERED"] = "1"
-    # Match the utf-8 decoding of our reader regardless of how the runner
-    # itself was launched (GUI, MCP, or bare CLI).
-    env["PYTHONIOENCODING"] = "utf-8"
-    # Never let HF fall into an interactive auth prompt inside a GUI child.
+    apply_runtime_safety()
+    env = child_process_env()
     env["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = env.get("HF_HUB_DISABLE_IMPLICIT_TOKEN", "0")
-    
-    # Configure safety limits dynamically for the merge models
+
     model_refs = [entry["model"] if isinstance(entry, dict) else entry for entry in config.models]
     if config.base_model:
         model_refs.append(config.base_model)
     _, safety_env = configure_safety_limits(model_refs)
-    
-    # Update Popen environment dict with safety thread configurations
     env.update(safety_env)
 
     mergekit_config = write_mergekit_config(config_path)
@@ -402,11 +400,7 @@ def run_real_merge(config: MergeConfig, config_path: str) -> int:
         mergekit_config,
         str(model_path),
         "--allow-crimes",
-        # Low-memory operation: 7B-class merges must run on 16GB-RAM
-        # machines. Without these the executor swaps, crawls, and is
-        # eventually killed by the OS with no traceback.
-        "--lazy-unpickle",
-        "--out-shard-size", "1B",
+        *mergekit_memory_flags(),
     ]
 
     # stdin MUST be detached: the GUI host has no console, so any prompt

@@ -8,19 +8,16 @@ from pathlib import Path
 # Add runner/ directory to sys.path so sytra_runner can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Lower CPU scheduling priority on Unix (Linux & macOS) so desktop UI remains responsive
-if hasattr(os, "nice"):
-    try:
-        os.nice(10)
-    except OSError:
-        pass
+from sytra_runner.xet_safety import apply_runtime_safety
+
+apply_runtime_safety()
 
 from sytra_runner.fast_downloader import FastHFDownloader
 
 def download_model_fast(
     repo_id: str,
     dest_dir: str = None,
-    workers: int = 4,
+    workers: int = 1,
     quant: str = "auto",
     purpose: str = "inference",
     revision: str = "main",
@@ -79,7 +76,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sytra verified Hugging Face/Xet model downloader")
     parser.add_argument("--model", type=str, required=True, help="HuggingFace model repository ID (e.g. org/repo)")
     parser.add_argument("--dest", type=str, default=None, help="Destination directory on any drive")
-    parser.add_argument("--workers", type=int, default=4, help="Number of files downloaded concurrently (hf-xet parallelizes chunks)")
+    parser.add_argument("--workers", type=int, default=1, help="Number of files downloaded concurrently (hf-xet parallelizes chunks; keep 1 to avoid OS paging)")
     parser.add_argument("--quant", type=str, default="auto", help="Quantization target (auto, Q4_K_M, Q5_K_M, Q8_0, FP16, BF16)")
     parser.add_argument("--purpose", choices=("inference", "finetune", "merge"), default="inference")
     parser.add_argument("--revision", default="main", help="Branch, tag, or commit to resolve and pin")

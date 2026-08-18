@@ -13,7 +13,10 @@ import importlib.metadata
 from typing import Any
 
 from .. import telemetry
+from ..xet_safety import apply_runtime_safety
 from ..config import RunConfig
+
+apply_runtime_safety()
 
 
 _ML_PACKAGES = (
@@ -329,6 +332,10 @@ def run_real_training(config: RunConfig) -> int:
             "lr_scheduler_type": config.optim.get("schedule", "cosine"),
             "seed": 3407,
             "report_to": "none",
+            # Windows freeze guard: extra DataLoader processes duplicate
+            # CUDA/Xet working sets and page the desktop.
+            "dataloader_num_workers": 0,
+            "dataloader_pin_memory": False,
             # Explicitly restrict loss to the assistant completion. This is
             # supported because the dataset above is prompt-completion shaped.
             "completion_only_loss": True,
@@ -371,6 +378,8 @@ def run_real_training(config: RunConfig) -> int:
             lr_scheduler_type=config.optim.get("schedule", "cosine"),
             seed=3407,
             report_to="none",
+            dataloader_num_workers=0,
+            dataloader_pin_memory=False,
         )
         if train_mode == "dpo":
             from trl import DPOTrainer

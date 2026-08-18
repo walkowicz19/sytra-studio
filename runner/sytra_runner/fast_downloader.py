@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from . import telemetry
+from .xet_safety import apply_xet_safety
+
+apply_xet_safety()
 
 
 _METADATA_NAMES = {
@@ -220,20 +223,16 @@ class FastHFDownloader:
         self.repo_id = repo_id
         self.cache_dir = Path(cache_dir or os.environ.get("HF_HOME", "./.hf-cache"))
         self.tokenless = tokenless
-        # hf-xet already parallelizes chunks within a file. Multiple concurrent
-        # hf_hub_download calls can race while creating local cache artifacts on
-        # Windows (WinError 183), so keep file scheduling sequential there.
-        self.max_workers = 1 if os.name == "nt" else max(1, min(max_workers, 8))
+        # hf-xet already parallelizes chunks within a file. Extra file
+        # workers each reserve reconstruction buffers, which pages every OS.
+        self.max_workers = 1
         self.repo_dir = self.cache_dir / "hub" / f"models--{repo_id.replace('/', '--')}"
         self._resolved_revision: str | None = None
 
-        # Configure safe Hugging Face and Xet transfer defaults.
-        # High performance mode is disabled to prevent buffer bloat and system lockups on consumer systems.
-        os.environ.setdefault("HF_HOME", str(self.cache_dir.resolve()))
-        os.environ.setdefault("HF_XET_CACHE", str((self.cache_dir / "xet").resolve()))
-        os.environ["HF_XET_HIGH_PERFORMANCE"] = "0"
-        os.environ.setdefault("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824")
+        os.environ["HF_HOME"] = str(self.cache_dir.resolve())
+        os.environ["HF_XET_CACHE"] = str((self.cache_dir / "xet").resolve())
         os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+        apply_xet_safety()
 
     @property
     def token(self) -> str | bool | None:

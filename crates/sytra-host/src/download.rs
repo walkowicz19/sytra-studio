@@ -5,9 +5,11 @@ use std::thread;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::env_provisioner::EnvProvisioner;
 use crate::process::kill_process_tree;
 use crate::settings::AppSettings;
 use crate::workspace::default_model_dir;
+use crate::xet_safety::apply_xet_safety;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadStatus {
@@ -102,36 +104,25 @@ impl DownloadService {
             }
         }
 
+        let python = EnvProvisioner::new(&self.workspace)
+            .ensure_download()
+            .map_err(|e| e.to_string())?;
         let script = self
             .workspace
             .join("runner")
             .join("scripts")
             .join("download_gguf_model.py");
         let settings = AppSettings::load(&self.workspace);
-        let uv_exe = if cfg!(target_os = "windows") {
-            "uv.exe"
-        } else {
-            "uv"
-        };
-        let mut cmd = std::process::Command::new(uv_exe);
-        cmd.args([
-            "run",
-            "--no-project",
-            "--with",
-            "huggingface-hub>=0.34",
-            "--with",
-            "hf-xet>=1.1.5",
-            "python",
-        ])
-        .arg(&script)
-        .arg("--model")
-        .arg(repo_id)
-        .arg("--quant")
-        .arg(quant.unwrap_or("auto"))
-        .arg("--purpose")
-        .arg(purpose)
-        .arg("--revision")
-        .arg(revision.unwrap_or("main"));
+        let mut cmd = std::process::Command::new(python);
+        cmd.arg(&script)
+            .arg("--model")
+            .arg(repo_id)
+            .arg("--quant")
+            .arg(quant.unwrap_or("auto"))
+            .arg("--purpose")
+            .arg(purpose)
+            .arg("--revision")
+            .arg(revision.unwrap_or("main"));
         if settings.tokenless_download {
             cmd.arg("--tokenless");
         }
@@ -140,22 +131,15 @@ impl DownloadService {
                 cmd.arg("--dest").arg(dest);
             }
         }
-        cmd.env("HF_XET_HIGH_PERFORMANCE", "0")
-            .env("HF_XET_RECONSTRUCTION_DOWNLOAD_BUFFER_LIMIT", "1073741824")
+        cmd.env("PYTHONUNBUFFERED", "1")
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONPATH", self.workspace.join("runner"))
+            .env("HF_HOME", settings.effective_hf_cache(&self.workspace))
+            .env("HF_HUB_DISABLE_TELEMETRY", "1")
+            .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
             .current_dir(&self.workspace);
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
-            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
+        apply_xet_safety(&mut cmd);
+        crate::apply_desktop_priority(&mut cmd);
 
         let mut child = cmd
             .spawn()

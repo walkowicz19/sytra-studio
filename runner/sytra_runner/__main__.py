@@ -5,19 +5,14 @@ the Unsloth trainer or the mergekit merger.
 """
 from __future__ import annotations
 
-import os
 import sys
 import traceback
 import yaml
 
-# Lower CPU scheduling priority on Unix (Linux & macOS) so desktop and system UI stay responsive
-if hasattr(os, "nice"):
-    try:
-        os.nice(10)
-    except OSError:
-        pass
-
 from . import telemetry
+from .xet_safety import apply_runtime_safety
+
+apply_runtime_safety()
 
 
 def main() -> int:

@@ -73,22 +73,15 @@ impl DataSource for SyntheticDataSource {
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        // Locate python executable in train-env if provisioned
-        let env_dir = workspace.join(".sytra-envs").join("train-env");
-        let python_path = if cfg!(target_os = "windows") {
-            env_dir.join("Scripts").join("python.exe")
-        } else {
-            env_dir.join("bin").join("python")
-        };
-        let python_exec = if python_path.exists() {
-            python_path
-        } else {
-            PathBuf::from("python")
-        };
+        let python_exec = crate::EnvProvisioner::new(&workspace)
+            .ensure_train()
+            .map_err(|e| DataSourceError::InvalidSpec(e.to_string()))?;
 
         let out_file = out_dir.join("data.jsonl");
 
         let mut cmd = std::process::Command::new(python_exec);
+        crate::apply_xet_safety(&mut cmd);
+        crate::apply_desktop_priority(&mut cmd);
         cmd.args(&[
             "-m",
             "sytra_runner.synth",
