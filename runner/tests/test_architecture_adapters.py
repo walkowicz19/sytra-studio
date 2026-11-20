@@ -179,10 +179,19 @@ def test_weight_placement_uses_nvme_only_when_adapter_allows_it():
     ("model_type", "architecture", "adapter_id"),
     [
         ("deepseek_v3", "DeepseekV3ForCausalLM", "sytra-deepseek-v3"),
+        ("deepseek_r1", "DeepseekR1ForCausalLM", "sytra-deepseek-v3"),
         ("qwen3_moe", "Qwen3MoeForCausalLM", "sytra-qwen3-moe"),
+        ("qwen3_next_moe", "Qwen38FlashNextForCausalLM", "sytra-qwen3-moe"),
         ("mixtral", "MixtralForCausalLM", "sytra-mixtral"),
         ("olmoe", "OlmoeForCausalLM", "sytra-olmoe"),
         ("dbrx", "DbrxForCausalLM", "sytra-dbrx"),
+        ("grok", "Grok1ModelForCausalLM", "sytra-grok"),
+        ("llama4_moe", "Llama4ForCausalLM", "sytra-llama4-moe"),
+        ("ernie_moe", "ErnieMoeForCausalLM", "sytra-ernie-moe"),
+        ("jamba", "JambaForCausalLM", "sytra-jamba-moe"),
+        ("arctic", "ArcticForCausalLM", "sytra-arctic"),
+        ("granitemoe", "GraniteMoeForCausalLM", "sytra-granite-moe"),
+        ("minimax", "MiniMaxForCausalLM", "sytra-minimax-moe"),
     ],
 )
 def test_major_moe_families_have_distinct_compiled_profiles(
@@ -199,7 +208,7 @@ def test_major_moe_families_have_distinct_compiled_profiles(
         "num_experts_per_tok": 2,
         "moe_intermediate_size": 16,
     }
-    if model_type == "deepseek_v3":
+    if model_type in {"deepseek_v3", "deepseek_r1"}:
         config.update(kv_lora_rank=8, n_routed_experts=8)
     adapter = infer_architecture_adapter(config)
     assert adapter is not None

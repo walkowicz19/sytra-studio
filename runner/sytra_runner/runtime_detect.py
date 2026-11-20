@@ -1,9 +1,8 @@
-"""Locate llama.cpp, Ollama, LM Studio, Sytra engine, and Colibri."""
+"""Locate llama.cpp, Ollama, LM Studio, and Sytra Helix MoE engine."""
 from __future__ import annotations
 
 import os
 import shutil
-import sys
 from pathlib import Path
 
 
@@ -25,7 +24,7 @@ def extra_runtime_roots() -> list[Path]:
     """Search the MCP install home and an optional source checkout.
 
     MCP runs with workspace ``~/.sytra``, which does not contain
-    ``.tools/llama.cpp``, ``.tools/colibri``, or ``target-build/sytra-engine``. Point
+    ``.tools/llama.cpp`` or ``target-build/sytra-engine``. Point
     ``SYTRA_SOURCE_ROOT`` or ``~/.sytra/.sytra-source-root`` at the git
     checkout so planning still finds those binaries.
     """
@@ -107,7 +106,7 @@ def llama_server_lib_dir(launcher: list[str] | None) -> Path | None:
 
 
 def prepend_runtime_path(env: dict[str, str], launcher: list[str] | None) -> dict[str, str]:
-    """Put CUDA runtime DLLs next to llama-server on PATH (Windows)."""
+    """Put CUDA runtime DLLs next to llama-server or sytra-engine on PATH (Windows)."""
     updated = dict(env)
     lib_dir = llama_server_lib_dir(launcher)
     if lib_dir is None:
@@ -168,7 +167,9 @@ def find_sytra_engine(project_root: Path | None = None) -> list[str] | None:
         Path("target-build/release/sytra-engine"),
         Path("target-build/debug/sytra-engine.exe"),
         Path("target-build/debug/sytra-engine"),
+        Path("target/release/sytra-engine.exe"),
         Path("target/release/sytra-engine"),
+        Path("target/debug/sytra-engine.exe"),
         Path("target/debug/sytra-engine"),
         Path("bin/sytra-engine.exe"),
         Path("bin/sytra-engine"),
@@ -178,96 +179,6 @@ def find_sytra_engine(project_root: Path | None = None) -> list[str] | None:
             found = _existing_file(root / suffix)
             if found:
                 return [str(found)]
-    return None
-
-
-def _is_native_executable(path: Path) -> bool:
-    suffix = path.suffix.lower()
-    if suffix in {".exe", ".cmd", ".bat"}:
-        return True
-    try:
-        header = path.read_bytes()[:4]
-    except OSError:
-        return False
-    return header[:2] == b"MZ" or header[:4] in {
-        b"\x7fELF",
-        b"\xcf\xfa\xed\xfe",
-        b"\xce\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe",
-        b"\xfe\xed\xfa\xcf",
-    }
-
-
-def coli_command_for(path: Path) -> list[str]:
-    resolved = path.resolve()
-    if _is_native_executable(resolved):
-        return [str(resolved)]
-    return [sys.executable, str(resolved)]
-
-
-def find_colibri_in_dir(directory: Path) -> list[str] | None:
-    names = ("coli.exe", "coli.cmd", "coli.py", "coli")
-    found = _existing_file(
-        *(directory / name for name in names),
-        *(directory / "c" / name for name in names),
-    )
-    if found:
-        return coli_command_for(found)
-    if not directory.is_dir():
-        return None
-    try:
-        children = list(directory.iterdir())
-    except OSError:
-        return None
-    for child in children:
-        if child.is_dir():
-            nested = _existing_file(
-                *(child / name for name in names),
-                *(child / "c" / name for name in names),
-            )
-            if nested:
-                return coli_command_for(nested)
-    return None
-
-
-def find_colibri(project_root: Path | None = None) -> list[str] | None:
-    override = _command_override("SYTRA_COLIBRI_COMMAND")
-    if override:
-        return override
-    home = os.environ.get("SYTRA_COLIBRI_HOME")
-    if home:
-        override_home = find_colibri_in_dir(Path(home))
-        if override_home:
-            return override_home
-    executable = (
-        shutil.which("coli")
-        or shutil.which("coli.exe")
-        or shutil.which("coli.cmd")
-        or shutil.which("coli.py")
-    )
-    if executable:
-        return coli_command_for(Path(executable))
-    suffixes = (
-        Path(".tools/colibri"),
-        Path(".tools/colibri/c"),
-        Path("colibri"),
-        Path("colibri/c"),
-    )
-    for root in project_roots(project_root):
-        for suffix in suffixes:
-            found = find_colibri_in_dir(root / suffix)
-            if found:
-                return found
-    local = Path(os.environ.get("LOCALAPPDATA", ""))
-    extras = (
-        Path.home() / "colibri",
-        Path.home() / "colibri" / "c",
-        local / "Programs" / "colibri",
-    )
-    for directory in extras:
-        found = find_colibri_in_dir(directory)
-        if found:
-            return found
     return None
 
 

@@ -138,26 +138,26 @@ BUILTIN_ADAPTERS: tuple[ArchitectureAdapter, ...] = (
     ),
     ArchitectureAdapter(
         id="sytra-deepseek-v3",
-        display_name="DeepSeek V2/V3 native Sytra contract",
+        display_name="DeepSeek V2/V3/R1/V4 native Sytra contract",
         engine="sytra_moe",
         engine_arch="deepseek_v3",
         family="deepseek_v3",
         attention_kind="mla",
         router_semantics="no_aux_tc",
         router_score="sigmoid",
-        model_type_patterns=(r"^deepseek_v[23]$",),
-        architecture_patterns=(r"^DeepseekV[23].*ForCausalLM$",),
-        notes="MLA plus sigmoid noaux_tc routing; dimensions are checkpoint-derived.",
+        model_type_patterns=(r"^deepseek_v[234]$", r"^deepseek_r1$"),
+        architecture_patterns=(r"^Deepseek(?:V[234]|R1).*ForCausalLM$",),
+        notes="MLA plus sigmoid noaux_tc routing and MTP heads; dimensions are checkpoint-derived.",
     ),
     ArchitectureAdapter(
         id="sytra-qwen3-moe",
-        display_name="Qwen3 MoE native Sytra contract",
+        display_name="Qwen3 MoE / Flash-Next native Sytra contract",
         engine="sytra_moe",
         engine_arch="qwen3_moe",
         family="qwen3_moe",
-        model_type_patterns=(r"^qwen3_moe$", r"^qwen3_next$"),
-        architecture_patterns=(r"^Qwen3(?:Moe|Next).*ForCausalLM$",),
-        notes="Standard/GQA or hybrid attention with normalized softmax top-k routing.",
+        model_type_patterns=(r"^qwen3_moe$", r"^qwen3_next(?:_moe)?$", r"^qwen3[._]?8.*moe$", r"^qwen3.*flash"),
+        architecture_patterns=(r"^Qwen3(?:\.?8)?(?:Moe|Next|Flash).*ForCausalLM$",),
+        notes="Standard/GQA or hybrid attention with normalized softmax top-k routing and ultra-fine micro-experts.",
     ),
     ArchitectureAdapter(
         id="sytra-qwen2-moe",
@@ -170,7 +170,7 @@ BUILTIN_ADAPTERS: tuple[ArchitectureAdapter, ...] = (
     ),
     ArchitectureAdapter(
         id="sytra-mixtral",
-        display_name="Mixtral native Sytra contract",
+        display_name="Mixtral 8x7B / 8x22B native Sytra contract",
         engine="sytra_moe",
         engine_arch="mixtral",
         family="mixtral",
@@ -212,13 +212,56 @@ BUILTIN_ADAPTERS: tuple[ArchitectureAdapter, ...] = (
     ),
     ArchitectureAdapter(
         id="sytra-arctic",
-        display_name="Snowflake Arctic native Sytra contract",
+        display_name="Snowflake Arctic 480B native Sytra contract",
         engine="sytra_moe",
         engine_arch="arctic",
         family="arctic",
         model_type_patterns=(r"^arctic",),
         architecture_patterns=(r"^Arctic.*ForCausalLM$",),
         activations=("silu", "gelu"),
+    ),
+    ArchitectureAdapter(
+        id="sytra-grok",
+        display_name="xAI Grok-1 / Grok-2 MoE native Sytra contract",
+        engine="sytra_moe",
+        engine_arch="grok",
+        family="grok",
+        model_type_patterns=(r"^grok", r"^grok[-_]?[12]"),
+        architecture_patterns=(r"^Grok.*ForCausalLM$",),
+        activations=("silu", "gelu", "gelu_tanh"),
+    ),
+    ArchitectureAdapter(
+        id="sytra-llama4-moe",
+        display_name="Meta Llama 4 MoE native Sytra contract",
+        engine="sytra_moe",
+        engine_arch="llama4_moe",
+        family="llama4_moe",
+        router_semantics="top_k_sigmoid",
+        router_score="sigmoid",
+        model_type_patterns=(r"^llama4", r"^llama4[_-]?moe", r"^llama_moe$"),
+        architecture_patterns=(r"^Llama4.*For(?:CausalLM|ConditionalGeneration)$",),
+        activations=("silu",),
+    ),
+    ArchitectureAdapter(
+        id="sytra-ernie-moe",
+        display_name="Baidu ERNIE MoE native Sytra contract",
+        engine="sytra_moe",
+        engine_arch="ernie_moe",
+        family="ernie_moe",
+        model_type_patterns=(r"^ernie.*moe",),
+        architecture_patterns=(r"^Ernie.*Moe.*ForCausalLM$",),
+        activations=("silu", "gelu"),
+    ),
+    ArchitectureAdapter(
+        id="sytra-jamba-moe",
+        display_name="AI21 Jamba Hybrid MoE native Sytra contract",
+        engine="sytra_moe",
+        engine_arch="jamba",
+        family="jamba_moe",
+        attention_kind="hybrid",
+        model_type_patterns=(r"^jamba$",),
+        architecture_patterns=(r"^Jamba.*ForCausalLM$",),
+        activations=("silu",),
     ),
     ArchitectureAdapter(
         id="sytra-minimax-moe",
@@ -513,6 +556,9 @@ def _quantization_contract(config: dict[str, Any], expert_format: str) -> dict[s
             )
     if expert_format == "packed_int4_group32":
         result.update(bits=4, group_size=32, symmetric=True, scale_dtype="bf16")
+    elif expert_format == "packed_int4_group":
+        group_size = int(result.get("group_size") or 128)
+        result.update(bits=4, group_size=group_size, symmetric=True, scale_dtype="bf16")
     elif expert_format == "int4_group":
         result["bits"] = result["bits"] or 4
     elif expert_format == "int8":

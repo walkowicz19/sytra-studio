@@ -5,6 +5,44 @@ use sytra_contracts::run_config::BackendKind;
 static SYSTEM_RAM: OnceLock<Option<u64>> = OnceLock::new();
 static SYSTEM_VRAM: OnceLock<Option<u64>> = OnceLock::new();
 
+#[cfg(target_os = "windows")]
+fn windows_ram_mb() -> Option<u64> {
+    #[repr(C)]
+    struct MemoryStatus {
+        length: u32,
+        load: u32,
+        total_physical: u64,
+        available_physical: u64,
+        total_page_file: u64,
+        available_page_file: u64,
+        total_virtual: u64,
+        available_virtual: u64,
+        available_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(status: *mut MemoryStatus) -> i32;
+    }
+    let mut status = MemoryStatus {
+        length: std::mem::size_of::<MemoryStatus>() as u32,
+        load: 0,
+        total_physical: 0,
+        available_physical: 0,
+        total_page_file: 0,
+        available_page_file: 0,
+        total_virtual: 0,
+        available_virtual: 0,
+        available_extended_virtual: 0,
+    };
+    // SAFETY: repr(C) matches MEMORYSTATUSEX and the live, writable structure
+    // includes the length required by the Windows API. No retained pointer.
+    if unsafe { GlobalMemoryStatusEx(&mut status) } != 0 && status.total_physical > 0 {
+        Some(status.total_physical / (1024 * 1024))
+    } else {
+        None
+    }
+}
+
 pub struct BackendResolver;
 
 impl BackendResolver {
@@ -36,8 +74,9 @@ impl BackendResolver {
             "nvidia-smi"
         };
 
-        Command::new(cmd)
-            .arg("-L")
+        let mut c = Command::new(cmd);
+        crate::apply_hidden_window(&mut c);
+        c.arg("-L")
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
@@ -50,8 +89,9 @@ impl BackendResolver {
             "rocm-smi"
         };
 
-        Command::new(cmd)
-            .output()
+        let mut c = Command::new(cmd);
+        crate::apply_hidden_window(&mut c);
+        c.output()
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
@@ -62,8 +102,14 @@ impl BackendResolver {
 
     pub fn detect_system_ram_mb() -> Option<u64> {
         *SYSTEM_RAM.get_or_init(|| {
+            #[cfg(target_os = "windows")]
+            if let Some(ram) = windows_ram_mb() {
+                return Some(ram);
+            }
             if cfg!(target_os = "windows") {
-                let output = Command::new("powershell")
+                let mut c = Command::new("powershell");
+                crate::apply_hidden_window(&mut c);
+                let output = c
                     .args([
                         "-NoProfile",
                         "-Command",
@@ -109,8 +155,9 @@ impl BackendResolver {
     pub fn detect_system_vram_mb() -> Option<u64> {
         *SYSTEM_VRAM.get_or_init(|| {
             let output = if cfg!(target_os = "windows") {
-                Command::new("nvidia-smi.exe")
-                    .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+                let mut c = Command::new("nvidia-smi.exe");
+                crate::apply_hidden_window(&mut c);
+                c.args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
                     .output()
             } else {
                 Command::new("nvidia-smi")
@@ -132,8 +179,14 @@ impl BackendResolver {
             }
 
             if cfg!(target_os = "windows") {
-                let output = Command::new("powershell")
-                    .args(["-NoProfile", "-Command", "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty AdapterRAM | Measure-Object -Maximum).Maximum"])
+                let mut c = Command::new("powershell");
+                crate::apply_hidden_window(&mut c);
+                let output = c
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "$qw = (Get-ItemProperty -Path 'HKLM:\\SYSTEM\\ControlSet001\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0*' -Name 'HardwareInformation.qwMemorySize' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'HardwareInformation.qwMemorySize' | Measure-Object -Maximum).Maximum; if ($qw) { $qw } else { (Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty AdapterRAM | Measure-Object -Maximum).Maximum }",
+                    ])
                     .output();
                 if let Ok(out) = output {
                     if out.status.success() {

@@ -23,6 +23,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-flash-attention", action="store_true")
     parser.add_argument("--backend", default="auto")
     parser.add_argument("--project-root", default=None)
+    parser.add_argument("--vram-guardrail-mb", type=int, default=None)
+    parser.add_argument("--draft-model-path", default=None)
+    parser.add_argument("--target-tps", type=float, default=0.25)
+    parser.add_argument("--allow-unverified", action="store_true")
     parser.add_argument("--export-runtimes", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -36,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
             kv_cache_quant=args.kv_cache_quant,
             flash_attention=not args.no_flash_attention,
             project_root=args.project_root,
+            vram_guardrail_mb=args.vram_guardrail_mb,
+            draft_model_path=args.draft_model_path,
+            target_tps=args.target_tps,
+            allow_unverified=args.allow_unverified,
         )
         payload = plan.to_dict()
         if args.export_runtimes:

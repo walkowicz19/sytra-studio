@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api } from '../../api'
-  import { run, resetRun, applyTelemetry, pushToast, trainFormStore, createDefaultDatasetItem } from '../../store.svelte'
+  import { run, resetRun, applyTelemetry, pushToast, trainFormStore } from '../../store.svelte'
   import { startWatchedOp } from '../shared/startWatchedOp'
   import type { RunConfig, TrainMode, AdapterType, Schedule, BackendKind } from '../../types'
 
@@ -23,44 +23,6 @@
     previewRows = null
     
     let sourceObj: any
-    if (trainFormStore.useMultiple) {
-      if (trainFormStore.datasets.length === 0) {
-        pushToast('error', 'Add at least one dataset to preview')
-        previewLoading = false
-        return
-      }
-      const first = trainFormStore.datasets[0]
-      sourceObj = { source: first.source }
-      if (first.source === 'hf') {
-        sourceObj.hf = {
-          repo_id: first.hfRepoId,
-          split: first.hfSplit,
-          revision: first.hfRevision || null,
-          config: first.hfConfig || null
-        }
-      } else if (first.source === 'local') {
-        sourceObj.local = {
-          path: first.localPath,
-          format: first.localFormat,
-          mapping: {
-            prompt: first.localPromptCol,
-            completion: first.localCompletionCol
-          }
-        }
-      } else if (first.source === 'synthetic') {
-        sourceObj.synthetic = {
-          generator_model: first.synthGenerator,
-          judge_model: first.synthJudge,
-          mode: first.synthMode,
-          count: 5,
-          topic: first.synthTopic
-        }
-      } else if (first.source === 'klayer') {
-        sourceObj.klayer = first.klayerDomain.trim()
-          ? { domain: first.klayerDomain.trim() }
-          : {}
-      }
-    } else {
       sourceObj = { source: trainFormStore.dataSplitSource }
       if (trainFormStore.dataSplitSource === 'hf') {
         sourceObj.hf = {
@@ -91,7 +53,6 @@
           ? { domain: trainFormStore.klayerDomain.trim() }
           : {}
       }
-    }
 
     try {
       const res = await api.previewDataset(sourceObj, 5)
@@ -110,64 +71,38 @@
 
   async function startTrain() {
     if (submitting || run.status === 'running') return
+    if (trainFormStore.trainingEngine === 'helix') {
+      const validAdapter = (trainFormStore.adapterKind === 'lora' && trainFormStore.quantBits === 0) ||
+        (trainFormStore.adapterKind === 'qlora' && (trainFormStore.quantBits === 4 || trainFormStore.quantBits === 8))
+      if (trainFormStore.trainMode !== 'sft' || !validAdapter) {
+        pushToast('error', 'Helix requires SFT with unquantized LoRA or 4-bit/8-bit QLoRA.')
+        return
+      }
+      if (!Number.isInteger(trainFormStore.activationMemoryMb) || trainFormStore.activationMemoryMb < 0 || trainFormStore.activationMemoryMb > 65536) {
+        pushToast('error', 'Helix activation memory must be between 0 and 65536 MB.')
+        return
+      }
+      if (trainFormStore.helixPrefetch && trainFormStore.backend === 'cpu') {
+        pushToast('error', 'Helix layer prefetch requires CUDA.')
+        return
+      }
+      if (trainFormStore.helixPrefetch && (!Number.isInteger(trainFormStore.helixPrefetchMemoryMb) || trainFormStore.helixPrefetchMemoryMb < 0 || trainFormStore.helixPrefetchMemoryMb > 4096)) {
+        pushToast('error', 'Pinned prefetch memory must be between 0 and 4096 MB.')
+        return
+      }
+      if (trainFormStore.packing === true && (trainFormStore.batchSize !== 1 || trainFormStore.backend === 'cpu')) {
+        pushToast('error', 'Helix packing requires CUDA and batch size 1.')
+        return
+      }
+    }
+    if (trainFormStore.workflow !== 'fresh' && !trainFormStore.sourceAdapter.trim()) {
+      pushToast('error', 'Choose a source adapter or checkpoint directory')
+      return
+    }
     submitting = true; resetRun()
 
     let dataSpec: any = {}
 
-    if (trainFormStore.useMultiple) {
-      if (trainFormStore.datasets.length === 0) {
-        pushToast('error', 'Must specify at least one dataset')
-        submitting = false
-        return
-      }
-      if (trainFormStore.datasets.length > 150) {
-        pushToast('error', 'Maximum limit of datasets is 150')
-        submitting = false
-        return
-      }
-      dataSpec = {
-        source: 'multi',
-        jsonl_path: null,
-        fingerprint: null,
-        datasets: trainFormStore.datasets.map(ds => {
-          const itemSpec: any = {
-            source: ds.source,
-            jsonl_path: null,
-            fingerprint: null
-          }
-          if (ds.source === 'hf') {
-            itemSpec.hf = {
-              repo_id: ds.hfRepoId,
-              split: ds.hfSplit,
-              revision: ds.hfRevision || null,
-              config: ds.hfConfig || null
-            }
-          } else if (ds.source === 'local') {
-            itemSpec.local = {
-              path: ds.localPath,
-              format: ds.localFormat,
-              mapping: {
-                prompt: ds.localPromptCol,
-                completion: ds.localCompletionCol
-              }
-            }
-          } else if (ds.source === 'synthetic') {
-            itemSpec.synthetic = {
-              generator_model: ds.synthGenerator,
-              judge_model: ds.synthJudge,
-              mode: ds.synthMode,
-              count: ds.synthCount,
-              topic: ds.synthTopic
-            }
-          } else if (ds.source === 'klayer') {
-            itemSpec.klayer = ds.klayerDomain.trim()
-              ? { domain: ds.klayerDomain.trim() }
-              : {}
-          }
-          return itemSpec
-        })
-      }
-    } else {
       dataSpec = {
         source: trainFormStore.dataSplitSource,
         jsonl_path: null,
@@ -202,16 +137,27 @@
           ? { domain: trainFormStore.klayerDomain.trim() }
           : {}
       }
-    }
 
     const config: any = {
       version: 1, train_mode: trainFormStore.trainMode, model: trainFormStore.model,
       backend: { kind: trainFormStore.backend },
       data: dataSpec,
-      adapter: { type: trainFormStore.adapterKind, rank: trainFormStore.rank, alpha: trainFormStore.alpha, dropout: trainFormStore.dropout, target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj'], quant_bits: trainFormStore.quantBits === 0 ? null : trainFormStore.quantBits },
-      optim: { learning_rate: trainFormStore.lr, schedule: trainFormStore.schedule, warmup_steps: trainFormStore.warmupSteps, weight_decay: trainFormStore.weightDecay, grad_accumulation_steps: trainFormStore.gradAcc },
-      train: { max_steps: trainFormStore.maxSteps, batch_size: trainFormStore.batchSize, max_seq_len: trainFormStore.maxSeqLen, save_every: trainFormStore.saveEvery, packing: trainFormStore.packing },
-      output: { adapter_path: trainFormStore.outputPath },
+      val_dataset: trainFormStore.validationPath.trim() || undefined,
+      adapter: { type: trainFormStore.adapterKind, rank: trainFormStore.rank, alpha: trainFormStore.alpha, dropout: trainFormStore.dropout, target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj'], quant_bits: trainFormStore.quantBits === 0 ? null : trainFormStore.quantBits, use_rslora: trainFormStore.useRsLora, moe_topology: trainFormStore.moeTopology },
+      optim: { learning_rate: trainFormStore.lr, schedule: trainFormStore.schedule, warmup_steps: trainFormStore.warmupSteps, weight_decay: trainFormStore.weightDecay, grad_accumulation_steps: trainFormStore.gradAcc, router_lr_ratio: trainFormStore.workflow === 'fresh' && trainFormStore.moeTopology !== 'attention' ? 0.1 : null, router_aux_coef: trainFormStore.workflow === 'fresh' && trainFormStore.moeTopology !== 'attention' && trainFormStore.trainMode === 'sft' ? trainFormStore.routerAuxCoef : null },
+      train: {
+        ...(trainFormStore.useEpochs ? { epochs: Math.max(1, trainFormStore.epochs) } : { max_steps: trainFormStore.maxSteps }),
+        batch_size: trainFormStore.batchSize, max_seq_len: trainFormStore.maxSeqLen, save_every: trainFormStore.saveEvery, packing: trainFormStore.packing, neftune_noise_alpha: trainFormStore.trainMode === 'sft' ? trainFormStore.neftuneAlpha : 0
+      },
+      ...(trainFormStore.trainMode === 'sft' ? { algo: { completion_only_loss: trainFormStore.completionOnlyLoss } } : {}),
+      init_adapter: trainFormStore.workflow === 'continue' ? trainFormStore.sourceAdapter.trim() : undefined,
+      performance: { mode: trainFormStore.performanceMode, training_engine: trainFormStore.trainingEngine,
+        ...(trainFormStore.trainingEngine === 'helix' ? { activation_memory_mb: trainFormStore.activationMemoryMb, helix_prefetch: trainFormStore.helixPrefetch,
+          ...(trainFormStore.helixPrefetch ? { prefetch_pinned_memory_mb: trainFormStore.helixPrefetchMemoryMb } : {}) } : {}) },
+      output: {
+        adapter_path: trainFormStore.outputPath,
+        resume_from_checkpoint: trainFormStore.workflow === 'resume' ? trainFormStore.sourceAdapter.trim() : undefined,
+      },
     }
     try {
       await startWatchedOp('train', () => api.startTrain(config))
@@ -266,9 +212,27 @@
         <div class="card-header"><span class="text-label">Model & Backend</span></div>
         <div class="card-body grid-2">
           <div class="field col-2">
+            <label class="field-label" for="training-workflow">Starting point</label>
+            <select id="training-workflow" class="select" bind:value={trainFormStore.workflow}>
+              <option value="fresh">New adapter</option>
+              <option value="continue">Post-train from adapter</option>
+              <option value="resume">Resume interrupted run</option>
+            </select>
+          </div>
+          {#if trainFormStore.workflow !== 'fresh'}
+            <div class="field col-2">
+              <label class="field-label" for="source-adapter">{trainFormStore.workflow === 'resume' ? 'Trainer checkpoint directory' : 'Source adapter directory'}</label>
+              <input id="source-adapter" class="input input-mono" bind:value={trainFormStore.sourceAdapter} placeholder="D:/models/my-adapter/checkpoint-400" />
+              <span class="field-hint">{trainFormStore.workflow === 'resume' ? 'Restores weights, optimizer, scheduler, and step counter. Set steps to the total target.' : 'Keeps the saved adapter weights and structure. Starts a new optimizer and step counter; choose a separate output directory.'}</span>
+              {#if trainFormStore.workflow === 'continue' && trainFormStore.trainingEngine !== 'helix'}
+                <button class="btn btn-ghost btn-sm" onclick={() => { trainFormStore.quantBits = 4; trainFormStore.adapterKind = 'qlora'; trainFormStore.lr = 1.5e-5; trainFormStore.maxSteps = 300; trainFormStore.outputPath = `runs/continued-${Date.now()}` }}>Apply continued SFT preset (4-bit, LR 1.5e-5, 300 steps)</button>
+              {/if}
+            </div>
+          {/if}
+          <div class="field col-2">
             <label class="field-label" for="input-model">Base Model</label>
             <input id="input-model" class="input input-mono" bind:value={trainFormStore.model} placeholder="org/model-name" />
-            <span class="field-hint">Hugging Face model ID or local path</span>
+            <span class="field-hint">{trainFormStore.trainingEngine === 'helix' ? 'Local directory of a Mixtral, Qwen MoE, or DeepSeek MoE safetensors checkpoint (unquantized or bitsandbytes 4/8-bit) and tokenizer.' : 'Catalog base model ID, or local adapter directory (its base must be in the catalog).'}</span>
           </div>
           <div class="field">
             <label class="field-label" for="select-train-mode">Training Mode</label>
@@ -284,159 +248,63 @@
             <select id="select-backend" class="select" bind:value={trainFormStore.backend}>
               <option value="auto">Auto-detect</option>
               <option value="cuda">CUDA (NVIDIA)</option>
-              <option value="mps">MPS (Apple Silicon)</option>
-              <option value="cpu">CPU (slow)</option>
+              {#if trainFormStore.trainingEngine === 'helix'}<option value="cpu">CPU</option>{/if}
+
             </select>
           </div>
         </div>
       </section>
+
+      <div class="field">
+        <label class="field-label" for="training-engine">Training engine</label>
+        <select id="training-engine" class="select" bind:value={trainFormStore.trainingEngine}>
+          <option value="auto">Standard</option>
+          <option value="helix">Helix (layer-streamed MoE)</option>
+        </select>
+        <span class="field-hint">Helix streams local Mixtral, Qwen2/3 MoE, and DeepSeek V2/V3 checkpoints by layer. 4/8-bit QLoRA reuses compatible bitsandbytes weights or builds a quantized cache in the output directory. Packing requires CUDA, batch size 1, and compatible FlexAttention.</span>
+      </div>
+      {#if trainFormStore.trainingEngine === 'helix'}
+        <div class="field">
+          <label class="field-label" for="helix-activation-memory">Activation memory limit (MB)</label>
+          <input id="helix-activation-memory" class="input" type="number" min="0" max="65536" step="64" bind:value={trainFormStore.activationMemoryMb} />
+          <span class="field-hint">Activations above this limit are temporarily stored in the output directory. 0 uses disk for all stored activations.</span>
+        </div>
+        <div class="field">
+          <label for="helix-prefetch"><input id="helix-prefetch" type="checkbox" bind:checked={trainFormStore.helixPrefetch} /> Prefetch the next layer on CUDA</label>
+          <span class="field-hint">Uses additional VRAM. Transfer overlap depends on the system; experts are loaded after routing.</span>
+        </div>
+        {#if trainFormStore.helixPrefetch}
+          <div class="field">
+            <label class="field-label" for="helix-prefetch-memory">Pinned prefetch memory limit (MB)</label>
+            <input id="helix-prefetch-memory" class="input" type="number" min="0" max="4096" step="64" bind:value={trainFormStore.helixPrefetchMemoryMb} />
+            <span class="field-hint">Limits pinned staging for future layer weights. 0 uses pageable transfers.</span>
+          </div>
+        {/if}
+      {/if}
+      <div class="field">
+        <label class="field-label" for="performance-mode">Performance</label>
+        <select id="performance-mode" class="select" bind:value={trainFormStore.performanceMode}>
+          <option value="auto">Auto</option>
+          <option value="safe">Safe - low memory</option>
+          <option value="fast">Fast</option>
+        </select>
+        <span class="field-hint">Plans workers and memory use while preserving your training settings. Resolved settings appear in the run log.</span>
+      </div>
 
       <!-- Dataset Picker -->
       <section class="card" id="section-dataset">
         <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-2)">
           <div style="display:flex; align-items:center; gap:var(--space-4)">
             <span class="text-label">Dataset Source</span>
-            <label style="display:flex; align-items:center; gap:6px; font-size:12px; font-weight:500; cursor:pointer; user-select:none; color:var(--color-ink-subtle)">
-              <input type="checkbox" bind:checked={trainFormStore.useMultiple} onchange={() => {
-                if (trainFormStore.useMultiple && trainFormStore.datasets.length === 0) {
-                  trainFormStore.datasets = [createDefaultDatasetItem(trainFormStore.dataSplitSource)];
-                }
-              }} style="width:14px; height:14px; accent-color:var(--color-brand)" />
-              Mix Multiple Datasets (Max 5)
-            </label>
           </div>
-          {#if !trainFormStore.useMultiple}
             <div class="segmented-control">
               <button class:active={trainFormStore.dataSplitSource === 'hf'} onclick={() => trainFormStore.dataSplitSource = 'hf'}>HF</button>
               <button class:active={trainFormStore.dataSplitSource === 'local'} onclick={() => trainFormStore.dataSplitSource = 'local'}>Local</button>
               <button class:active={trainFormStore.dataSplitSource === 'synthetic'} onclick={() => trainFormStore.dataSplitSource = 'synthetic'}>Synthetic</button>
               <button class:active={trainFormStore.dataSplitSource === 'klayer'} onclick={() => trainFormStore.dataSplitSource = 'klayer'}>Klayer</button>
             </div>
-          {/if}
         </div>
         <div class="card-body">
-          {#if trainFormStore.useMultiple}
-            <div style="display:flex; flex-direction:column; gap:var(--space-4)">
-              {#each trainFormStore.datasets as ds, idx (ds.id)}
-                <div class="card border-surface animate-in" style="padding:var(--space-3); background:var(--color-surface-muted)">
-                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:var(--space-3)">
-                    <div style="display:flex; align-items:center; gap:var(--space-3)">
-                      <span class="badge badge-info" style="font-size:10px; font-weight:600">Dataset #{idx + 1}</span>
-                      <select class="select" bind:value={ds.source} style="padding: 2px 6px; font-size:11px; height:auto; width:auto">
-                        <option value="hf">Hugging Face</option>
-                        <option value="local">Local File</option>
-                        <option value="synthetic">Synthetic</option>
-                        <option value="klayer">Klayer</option>
-                      </select>
-                    </div>
-                    <button class="btn btn-ghost btn-icon text-error" onclick={() => {
-                      trainFormStore.datasets = trainFormStore.datasets.filter(item => item.id !== ds.id)
-                    }} style="width:24px; height:24px; font-size:12px; display:flex; align-items:center; justify-content:center" title="Remove dataset">
-                      <i class="bi bi-trash"></i>
-                    </button>
-                  </div>
-
-                  {#if ds.source === 'hf'}
-                    <div class="grid-2">
-                      <div class="field">
-                        <label class="field-label" for="hf-repo-{ds.id}">HF Dataset Repo ID</label>
-                        <input id="hf-repo-{ds.id}" class="input input-mono" bind:value={ds.hfRepoId} placeholder="org/dataset" />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="hf-config-{ds.id}">Subset / Config (Optional)</label>
-                        <input id="hf-config-{ds.id}" class="input input-mono" bind:value={ds.hfConfig} placeholder="default" />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="hf-split-{ds.id}">Split</label>
-                        <input id="hf-split-{ds.id}" class="input" bind:value={ds.hfSplit} placeholder="train" />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="hf-rev-{ds.id}">Revision (Optional)</label>
-                        <input id="hf-rev-{ds.id}" class="input input-mono" bind:value={ds.hfRevision} placeholder="main" />
-                      </div>
-                    </div>
-                  {:else if ds.source === 'local'}
-                    <div class="grid-2">
-                      <div class="field col-2">
-                        <label class="field-label" for="local-path-{ds.id}">Local File Path</label>
-                        <input id="local-path-{ds.id}" class="input input-mono" bind:value={ds.localPath} placeholder="C:/path/to/dataset.csv" />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="local-format-{ds.id}">Format</label>
-                        <select id="local-format-{ds.id}" class="select" bind:value={ds.localFormat}>
-                          <option value="jsonl">JSONL (.jsonl)</option>
-                          <option value="csv">CSV (.csv)</option>
-                          <option value="parquet">Parquet (.parquet)</option>
-                        </select>
-                      </div>
-                      {#if ds.localFormat === 'csv' || ds.localFormat === 'parquet'}
-                        <div class="field col-2 mapping-builder border-surface" style="margin-top:var(--space-2)">
-                          <div class="text-title" style="font-size:12px; margin-bottom:var(--space-2)">Column Mapping</div>
-                          <div class="grid-2">
-                            <div class="field">
-                              <label class="field-label" for="local-prompt-{ds.id}">Prompt Column</label>
-                              <input id="local-prompt-{ds.id}" class="input input-mono" bind:value={ds.localPromptCol} placeholder="prompt" />
-                            </div>
-                            <div class="field">
-                              <label class="field-label" for="local-completion-{ds.id}">Completion Column</label>
-                              <input id="local-completion-{ds.id}" class="input input-mono" bind:value={ds.localCompletionCol} placeholder="completion" />
-                            </div>
-                          </div>
-                        </div>
-                      {/if}
-                    </div>
-                  {:else if ds.source === 'synthetic'}
-                    <div class="grid-2">
-                      <div class="field">
-                        <label class="field-label" for="synth-gen-{ds.id}">Generator Model</label>
-                        <input id="synth-gen-{ds.id}" class="input input-mono" bind:value={ds.synthGenerator} />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="synth-judge-{ds.id}">Judge Model</label>
-                        <input id="synth-judge-{ds.id}" class="input input-mono" bind:value={ds.synthJudge} />
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="synth-mode-{ds.id}">Mode</label>
-                        <select id="synth-mode-{ds.id}" class="select" bind:value={ds.synthMode}>
-                          <option value="prompts">Prompts Only</option>
-                          <option value="sft">SFT (Prompt + Response)</option>
-                          <option value="dpo">DPO (Prompt + Chosen + Rejected)</option>
-                        </select>
-                      </div>
-                      <div class="field">
-                        <label class="field-label" for="synth-count-{ds.id}">Sample Count</label>
-                        <input id="synth-count-{ds.id}" type="number" class="input" bind:value={ds.synthCount} min="5" max="1000" />
-                      </div>
-                      <div class="field col-2">
-                        <label class="field-label" for="synth-topic-{ds.id}">Seed Topic</label>
-                        <input id="synth-topic-{ds.id}" class="input" bind:value={ds.synthTopic} />
-                      </div>
-                    </div>
-                  {:else if ds.source === 'klayer'}
-                    <div class="grid-2">
-                      <div class="field col-2">
-                        <label class="field-label" for="klayer-domain-{ds.id}">Klayer domain (MCP export_dataset)</label>
-                        <input id="klayer-domain-{ds.id}" class="input input-mono" bind:value={ds.klayerDomain} placeholder="Leave empty to export every domain" />
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-
-              <button
-                class="btn btn-secondary btn-sm"
-                onclick={() => {
-                  if (trainFormStore.datasets.length < 5) {
-                    trainFormStore.datasets = [...trainFormStore.datasets, createDefaultDatasetItem()];
-                  }
-                }}
-                disabled={trainFormStore.datasets.length >= 5}
-                style="align-self:flex-start"
-              >
-                <i class="bi bi-plus" style="margin-right:4px"></i> Add Dataset ({trainFormStore.datasets.length}/5)
-              </button>
-            </div>
-          {:else}
             {#if trainFormStore.dataSplitSource === 'hf'}
               <div class="grid-2">
                 <div class="field">
@@ -468,6 +336,7 @@
                     <option value="jsonl">JSONL (.jsonl)</option>
                     <option value="csv">CSV (.csv)</option>
                     <option value="parquet">Parquet (.parquet)</option>
+                    <option value="manifest">Dataset manifest (.json)</option>
                   </select>
                 </div>
                 {#if trainFormStore.localFormat === 'csv' || trainFormStore.localFormat === 'parquet'}
@@ -521,7 +390,12 @@
                 </div>
               </div>
             {/if}
-          {/if}
+
+          <div class="field" style="margin-top:var(--space-4)">
+            <label class="field-label" for="validation-path">Validation dataset (optional)</label>
+            <input id="validation-path" class="input input-mono" bind:value={trainFormStore.validationPath} placeholder="Workspace path to .jsonl, .parquet, or .json manifest" />
+            <span class="field-hint">Use a separate file within the workspace. Evaluation runs during training.</span>
+          </div>
 
           <!-- Preview section -->
           <div style="margin-top:var(--space-4); display:flex; flex-direction:column; gap:var(--space-2)">
@@ -560,6 +434,7 @@
       <!-- Adapter -->
       <section class="card" id="section-adapter">
         <div class="card-header"><span class="text-label">Adapter</span></div>
+        {#if trainFormStore.workflow !== 'fresh'}<p class="field-hint">Rank, alpha, dropout, and targets are inherited from the source adapter. Continuing a router adapter uses one tenth of the learning rate; a full resume preserves the saved optimizer groups.</p>{/if}
         <div class="card-body" style="display:flex; flex-direction:column; gap:var(--space-4)">
           <div class="grid-2">
             <div class="field">
@@ -593,6 +468,24 @@
               <input id="slider-dropout" type="range" class="slider" min="0" max="0.5" step="0.01" bind:value={trainFormStore.dropout} />
             </div>
           </div>
+          {#if trainFormStore.workflow === 'fresh'}
+            <div class="field">
+              <label for="rslora"><input id="rslora" type="checkbox" bind:checked={trainFormStore.useRsLora} /> Use rank-stabilized LoRA (rsLoRA)</label>
+              <span class="field-hint">Uses alpha / √rank.</span>
+            </div>
+            <div class="field">
+              <label class="field-label" for="moe-lora-topology">LoRA targets</label>
+              <select id="moe-lora-topology" class="select" bind:value={trainFormStore.moeTopology}>
+                <option value="attention">Attention projections</option>
+                <option value="moe_hybrid">MoE: attention, router and shared experts</option>
+                <option value="moe_full">MoE: attention, router and all experts</option>
+              </select>
+              <span class="field-hint">{trainFormStore.trainingEngine === 'helix' ? 'Router adapters use one tenth of the learning rate. Shared experts (Qwen/DeepSeek) are included when present; full mode pages selected experts. Reload router and expert adapters with Helix; other loaders have not been verified.' : 'MoE options require separate supported Linear modules. Router adapters use one tenth of the learning rate; expert paging is not enabled.'}</span>
+            </div>
+            {#if trainFormStore.moeTopology !== 'attention' && trainFormStore.trainMode === 'sft'}
+              <div class="field"><label class="field-label" for="router-aux">Router balance coefficient</label><input id="router-aux" class="input" type="number" min="0" max="1" step="0.001" bind:value={trainFormStore.routerAuxCoef} /><span class="field-hint">0 disables the auxiliary loss. Requires compatible softmax routing and a padding mask.</span></div>
+            {/if}
+          {/if}
         </div>
       </section>
 
@@ -631,10 +524,26 @@
         <section class="card" id="section-train-params">
           <div class="card-header"><span class="text-label">Training</span></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
+            {#if trainFormStore.trainMode === 'sft'}
+              <div class="field"><label class="field-label" for="neftune-alpha">NEFTune noise alpha</label><input id="neftune-alpha" class="input" type="number" min="0" max="100" step="0.1" bind:value={trainFormStore.neftuneAlpha} /><span class="field-hint">0 disables embedding noise.</span></div>
+              <div class="field">
+                <label for="completion-only-loss"><input id="completion-only-loss" type="checkbox" bind:checked={trainFormStore.completionOnlyLoss} /> Completion-only loss (mask prompt tokens)</label>
+              </div>
+            {/if}
             <div class="field">
-              <label class="field-label" for="input-max-steps">Max Steps</label>
-              <input id="input-max-steps" class="input" type="number" bind:value={trainFormStore.maxSteps} />
+              <label for="toggle-use-epochs"><input id="toggle-use-epochs" type="checkbox" bind:checked={trainFormStore.useEpochs} /> Schedule by Epochs (instead of Max Steps)</label>
             </div>
+            {#if trainFormStore.useEpochs}
+              <div class="field">
+                <label class="field-label" for="input-epochs">Epochs</label>
+                <input id="input-epochs" class="input" type="number" min="1" step="1" bind:value={trainFormStore.epochs} />
+              </div>
+            {:else}
+              <div class="field">
+                <label class="field-label" for="input-max-steps">Max Steps</label>
+                <input id="input-max-steps" class="input" type="number" bind:value={trainFormStore.maxSteps} />
+              </div>
+            {/if}
             <div class="field">
               <label class="field-label" for="input-batch-size">Batch Size</label>
               <input id="input-batch-size" class="input" type="number" bind:value={trainFormStore.batchSize} />
@@ -651,16 +560,15 @@
               <label class="field-label" for="input-output-path">Output Path</label>
               <input id="input-output-path" class="input input-mono" bind:value={trainFormStore.outputPath} />
             </div>
-            <div class="toggle-row">
-              <div class="toggle-row-text">
-                <span class="field-label">Sequence Packing</span>
-                <span class="field-hint">Pack short sequences together</span>
+            <div class="field">
+                <label class="field-label" for="sequence-packing">Sequence packing</label>
+                <select id="sequence-packing" class="select" bind:value={trainFormStore.packing}>
+                  <option value="auto">Auto - when safe and useful</option>
+                  <option value={false}>Off</option>
+                  <option value={true}>On - requires compatible runtime</option>
+                </select>
+                {#if trainFormStore.trainingEngine === 'helix'}<span class="field-hint">For Helix, choose On explicitly to enable packing. Auto leaves it off.</span>{/if}
               </div>
-              <label class="toggle" id="toggle-packing">
-                <input type="checkbox" bind:checked={trainFormStore.packing} />
-                <div class="toggle-track"><div class="toggle-thumb"></div></div>
-              </label>
-            </div>
           </div>
         </section>
       </div>
@@ -689,9 +597,10 @@
         <div class="summary-title">Config Summary</div>
         <div class="summary-row"><span class="summary-key">Model</span><span class="summary-val">{trainFormStore.model.split('/').pop()}</span></div>
         <div class="summary-row"><span class="summary-key">Mode</span><span class="summary-val">{trainFormStore.trainMode.toUpperCase()}</span></div>
-        <div class="summary-row"><span class="summary-key">Adapter</span><span class="summary-val">{trainFormStore.adapterKind.toUpperCase()} r={trainFormStore.rank}</span></div>
+        <div class="summary-row"><span class="summary-key">Engine</span><span class="summary-val">{trainFormStore.trainingEngine === 'helix' ? 'Helix' : 'Standard'}</span></div>
+        <div class="summary-row"><span class="summary-key">Adapter</span><span class="summary-val">{trainFormStore.workflow === 'fresh' ? `${trainFormStore.adapterKind.toUpperCase()} r=${trainFormStore.rank}` : 'Source adapter'}</span></div>
         <div class="summary-row"><span class="summary-key">Quant</span><span class="summary-val">{trainFormStore.quantBits === 0 ? 'None' : trainFormStore.quantBits + '-bit'}</span></div>
-        <div class="summary-row"><span class="summary-key">Steps</span><span class="summary-val">{trainFormStore.maxSteps}</span></div>
+        <div class="summary-row"><span class="summary-key">Horizon</span><span class="summary-val">{trainFormStore.useEpochs ? `${trainFormStore.epochs} epoch(s)` : `${trainFormStore.maxSteps} steps`}</span></div>
         <div class="summary-row"><span class="summary-key">LR</span><span class="summary-val">{trainFormStore.lr.toExponential(1)}</span></div>
         <div class="summary-row"><span class="summary-key">Batch×GradAcc</span><span class="summary-val">{trainFormStore.batchSize}×{trainFormStore.gradAcc}={trainFormStore.batchSize*trainFormStore.gradAcc}</span></div>
       </div>
@@ -700,6 +609,9 @@
 
       <div class="summary-section">
         <div class="summary-title">VRAM Estimate</div>
+        {#if trainFormStore.trainingEngine === 'helix'}
+          <div class="field-hint">Calculated from the local checkpoint when training starts.</div>
+        {:else}
         <div class="vram-gauge">
           <div class="vram-val">{(estimatedVram / 1024).toFixed(1)} GB</div>
           <div class="vram-bar">
@@ -709,6 +621,7 @@
           </div>
           <div class="field-hint" style="margin-top:4px">Estimate for 24 GB GPU</div>
         </div>
+        {/if}
       </div>
 
       <div class="summary-divider"></div>
@@ -716,7 +629,9 @@
       <div class="summary-section">
         <div class="summary-title">Tips</div>
         <div class="tip-card">
-          {#if trainFormStore.quantBits === 0 && trainFormStore.adapterKind === 'lora'}
+          {#if trainFormStore.trainingEngine === 'helix'}
+            <p>Helix requires a local Mixtral, Qwen MoE, or DeepSeek MoE checkpoint and a separate output directory.</p>
+          {:else if trainFormStore.quantBits === 0 && trainFormStore.adapterKind === 'lora'}
             <p>Use 4-bit QLoRA to cut VRAM by ~65% for large models.</p>
           {:else if trainFormStore.quantBits === 4}
             <p>4-bit NF4 requires bitsandbytes ≥ 0.41. Unsloth handles this automatically.</p>

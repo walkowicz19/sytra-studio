@@ -1,36 +1,5 @@
 [
  {
-  "model_id": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
-  "name": "Llama 3 8B Instruct (MLX 4-bit)",
-  "param_count": 8030000000,
-  "architecture": "LlamaForCausalLM",
-  "dtype": "float16",
-  "moe_active_params": null,
-  "license": "llama3",
-  "default_target_modules": [
-   "q_proj",
-   "k_proj",
-   "v_proj",
-   "o_proj"
-  ],
-  "tokenizer_id": "meta-llama/Meta-Llama-3-8B-Instruct",
-  "use_case_tags": [
-   "chat",
-   "general",
-   "instruction-following",
-   "mlx"
-  ],
-  "benchmark_hint": "high",
-  "format": "mlx",
-  "downloadable": false,
-  "workflows": [],
-  "gated": true,
-  "approx_download_gb": 4.5,
-  "explicit_risks": [
-   "Apple MLX package \u2014 not for Windows CUDA or llama.cpp."
-  ]
- },
- {
   "model_id": "mistralai/Mistral-7B-v0.1",
   "name": "Mistral 7B v0.1",
   "param_count": 7242000000,
@@ -63,90 +32,6 @@
   ],
   "gated": false,
   "approx_download_gb": 14.5,
-  "explicit_risks": []
- },
- {
-  "model_id": "org/knowledge-ft",
-  "name": "Knowledge Fine-tuned Mistral",
-  "param_count": 7242000000,
-  "architecture": "MistralForCausalLM",
-  "dtype": "bfloat16",
-  "moe_active_params": null,
-  "license": "apache-2.0",
-  "default_target_modules": [
-   "q_proj",
-   "k_proj",
-   "v_proj",
-   "o_proj"
-  ],
-  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
-  "use_case_tags": [
-   "knowledge"
-  ],
-  "benchmark_hint": "medium",
-  "format": "safetensors",
-  "downloadable": false,
-  "workflows": [
-   "merge"
-  ],
-  "gated": false,
-  "approx_download_gb": null,
-  "explicit_risks": []
- },
- {
-  "model_id": "org/toolcalling-ft",
-  "name": "Toolcalling Fine-tuned Mistral",
-  "param_count": 7242000000,
-  "architecture": "MistralForCausalLM",
-  "dtype": "bfloat16",
-  "moe_active_params": null,
-  "license": "apache-2.0",
-  "default_target_modules": [
-   "q_proj",
-   "k_proj",
-   "v_proj",
-   "o_proj"
-  ],
-  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
-  "use_case_tags": [
-   "tool-use"
-  ],
-  "benchmark_hint": "medium",
-  "format": "safetensors",
-  "downloadable": false,
-  "workflows": [
-   "merge"
-  ],
-  "gated": false,
-  "approx_download_gb": null,
-  "explicit_risks": []
- },
- {
-  "model_id": "org/behavior-ft",
-  "name": "Behavior Fine-tuned Mistral",
-  "param_count": 7242000000,
-  "architecture": "MistralForCausalLM",
-  "dtype": "bfloat16",
-  "moe_active_params": null,
-  "license": "apache-2.0",
-  "default_target_modules": [
-   "q_proj",
-   "k_proj",
-   "v_proj",
-   "o_proj"
-  ],
-  "tokenizer_id": "mistralai/Mistral-7B-v0.1",
-  "use_case_tags": [
-   "chat"
-  ],
-  "benchmark_hint": "medium",
-  "format": "safetensors",
-  "downloadable": false,
-  "workflows": [
-   "merge"
-  ],
-  "gated": false,
-  "approx_download_gb": null,
   "explicit_risks": []
  },
  {
@@ -183,6 +68,42 @@
   ],
   "gated": false,
   "approx_download_gb": 15.2,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "Qwen/Qwen2.5-Coder-14B-Instruct",
+  "name": "Qwen2.5 Coder 14B Instruct",
+  "param_count": 14770000000,
+  "architecture": "Qwen2ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen2.5-Coder-14B-Instruct",
+  "use_case_tags": [
+   "code",
+   "instruction-following",
+   "fine-tuning",
+   "kairos-sophron"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 29.5,
   "explicit_risks": []
  },
  {
@@ -254,6 +175,173 @@
   "approx_download_gb": 20.0,
   "explicit_risks": [
    "Never treat as Qwen2. Vision tensors must not receive text LoRA."
+  ]
+ },
+ {
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "name": "Qwen3 4B Instruct 2507",
+  "param_count": 4022468096,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "use_case_tags": [
+   "chat",
+   "instruction-following",
+   "fine-tuning",
+   "agent"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 8.0,
+  "explicit_risks": [
+   "Non-thinking instruct checkpoint: does not emit <think> blocks. Do not enable thinking.",
+   "Distinct from Qwen/Qwen3-4B (hybrid thinking). eos is <|im_end|> (151645)."
+  ]
+ },
+ {
+  "model_id": "Qwen/Qwen3.5-9B",
+  "name": "Qwen3.5 9B",
+  "param_count": 10000000000,
+  "architecture": "Qwen3_5ForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "in_proj_qkv",
+   "in_proj_z",
+   "out_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3.5-9B",
+  "use_case_tags": [
+   "code",
+   "instruction-following",
+   "fine-tuning",
+   "multimodal",
+   "agent"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 20.0,
+  "explicit_risks": [
+   "Never treat as Qwen2. Vision tensors must not receive text LoRA.",
+   "Hybrid Gated DeltaNet layers need in_proj_qkv/in_proj_z/out_proj plus MLP; q/k/v/o alone adapts only 8 of 32 layers."
+  ]
+ },
+ {
+  "model_id": "Qwen/Qwen3-14B",
+  "name": "Qwen3 14B",
+  "param_count": 14800000000,
+  "architecture": "Qwen3ForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3-14B",
+  "use_case_tags": [
+   "chat",
+   "reasoning",
+   "multilingual",
+   "fine-tuning",
+   "kairos-sotos"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 29.6,
+  "explicit_risks": [
+   "Thinking mode is on by default. Fine-tune and serve with enable_thinking=False unless the dataset includes gold <think> spans."
+  ]
+ },
+ {
+  "model_id": "Qwen/Qwen3.8-27B",
+  "name": "Qwen3.8 27B",
+  "param_count": 27000000000,
+  "architecture": "Qwen3_5ForConditionalGeneration",
+  "dtype": "bfloat16",
+  "moe_active_params": null,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "in_proj_qkv",
+   "in_proj_z",
+   "out_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "Qwen/Qwen3.8-27B",
+  "use_case_tags": [
+   "code",
+   "reasoning",
+   "multimodal",
+   "fine-tuning",
+   "agent",
+   "kairos-sophia"
+  ],
+  "benchmark_hint": "high",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "finetune",
+   "merge",
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 54.0,
+  "explicit_risks": [
+   "Same hybrid family as Qwen3.5 (config model_type=qwen3_5). Never load as Qwen2.",
+   "Native vision-language checkpoint. Text LoRA must not match vision tensors.",
+   "Gated DeltaNet + full-attention mix: q/k/v/o alone adapts only the full-attention layers.",
+   "Do not train on the local 12GB box. Kaggle/32GB+ only."
   ]
  },
  {
@@ -4300,6 +4388,39 @@
   ],
   "gated": false,
   "approx_download_gb": 145.0,
+  "explicit_risks": []
+ },
+ {
+  "model_id": "RedHatAI/Qwen3-30B-A3B-quantized.w4a16",
+  "name": "Qwen3 30B-A3B INT4 (Sytra Helix SafeTensors)",
+  "param_count": 30519328768,
+  "architecture": "Qwen3MoeForCausalLM",
+  "dtype": "bfloat16",
+  "moe_active_params": 3300000000,
+  "license": "apache-2.0",
+  "default_target_modules": [
+   "q_proj",
+   "k_proj",
+   "v_proj",
+   "o_proj",
+   "gate_proj",
+   "up_proj",
+   "down_proj"
+  ],
+  "tokenizer_id": "RedHatAI/Qwen3-30B-A3B-quantized.w4a16",
+  "use_case_tags": [
+   "moe",
+   "reasoning",
+   "coding"
+  ],
+  "benchmark_hint": "medium",
+  "format": "safetensors",
+  "downloadable": true,
+  "workflows": [
+   "inference"
+  ],
+  "gated": false,
+  "approx_download_gb": 15.6,
   "explicit_risks": []
  }
 ]

@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     hash::{Hash, Hasher},
-    io::{Read, Seek, SeekFrom},
+    io::{Error, ErrorKind},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -145,6 +145,74 @@ struct Counters {
     mirror_fallbacks: AtomicU64,
 }
 
+#[derive(Debug, Default)]
+struct ShardHandlePool {
+    handles: Mutex<HashMap<PathBuf, Arc<File>>>,
+}
+
+impl ShardHandlePool {
+    fn read_exact_at(&self, path: &Path, offset: u64, expected: usize) -> Result<Arc<[u8]>, std::io::Error> {
+        let file = {
+            let mut handles = self
+                .handles
+                .lock()
+                .map_err(|_| Error::other("shard handle pool poisoned"))?;
+            if let Some(existing) = handles.get(path) {
+                existing.clone()
+            } else {
+                let opened = Arc::new(File::open(path)?);
+                handles.insert(path.to_path_buf(), opened.clone());
+                opened
+            }
+        };
+        let mut bytes = vec![0_u8; expected];
+        read_exact_file_at(&file, offset, &mut bytes)?;
+        Ok(bytes.into())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_exact_file_at(file: &File, offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+    use std::os::windows::fs::FileExt;
+    let mut done = 0_usize;
+    while done < buf.len() {
+        let count = file.seek_read(&mut buf[done..], offset + done as u64)?;
+        if count == 0 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ));
+        }
+        done += count;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn read_exact_file_at(file: &File, offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::FileExt;
+    let mut done = 0_usize;
+    while done < buf.len() {
+        let count = file.read_at(&mut buf[done..], offset + done as u64)?;
+        if count == 0 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ));
+        }
+        done += count;
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "windows", unix)))]
+fn read_exact_file_at(file: &File, offset: u64, buf: &mut [u8]) -> Result<(), std::io::Error> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut cloned = file.try_clone()?;
+    cloned.seek(SeekFrom::Start(offset))?;
+    cloned.read_exact(buf)
+}
+
 /// Byte-exact immutable expert storage with deterministic weighted mirrors.
 #[derive(Debug)]
 pub struct ExpertStore {
@@ -152,6 +220,7 @@ pub struct ExpertStore {
     mirrors: Vec<WeightedMirror>,
     index: HashMap<ExpertKey, ExpertLocation>,
     counters: Arc<Counters>,
+    shards: ShardHandlePool,
 }
 
 /// Byte-range access to non-routed tensors.
@@ -168,6 +237,7 @@ pub struct DenseTensorStore {
     cache_budget: u64,
     live_budget: u64,
     cache: Mutex<DenseCacheState>,
+    shards: ShardHandlePool,
 }
 
 impl DenseTensorStore {
@@ -199,6 +269,7 @@ impl DenseTensorStore {
             cache_budget,
             live_budget,
             cache: Mutex::new(DenseCacheState::default()),
+            shards: ShardHandlePool::default(),
         }
     }
 
@@ -268,18 +339,19 @@ impl DenseTensorStore {
         let primary_path = self.primary.join(&segment.shard);
         let read_result =
             if let Some(mirror) = self.select_mirror(tensor, &segment.shard, &primary_path) {
-                read_named_range(&mirror, tensor, segment.offset + relative_offset, length).or_else(
-                    |_| {
+                read_named_range(&self.shards, &mirror, tensor, segment.offset + relative_offset, length)
+                    .or_else(|_| {
                         read_named_range(
+                            &self.shards,
                             &primary_path,
                             tensor,
                             segment.offset + relative_offset,
                             length,
                         )
-                    },
-                )
+                    })
             } else {
                 read_named_range(
+                    &self.shards,
                     &primary_path,
                     tensor,
                     segment.offset + relative_offset,
@@ -362,6 +434,9 @@ impl DenseTensorStore {
         relative_path: &Path,
         primary_path: &Path,
     ) -> Option<PathBuf> {
+        if self.mirrors.is_empty() {
+            return None;
+        }
         let primary_len = fs::metadata(primary_path).ok()?.len();
         let eligible: Vec<_> = self
             .mirrors
@@ -483,6 +558,7 @@ impl ExpertStore {
                 mirror_bytes: AtomicU64::new(0),
                 mirror_fallbacks: AtomicU64::new(0),
             }),
+            shards: ShardHandlePool::default(),
         }
     }
 
@@ -514,7 +590,7 @@ impl ExpertStore {
             let primary_path = self.primary.join(&segment.shard);
             let selected = self.select_mirror(key, &segment.shard, &primary_path);
             if let Some(mirror_path) = selected {
-                match read_range(&mirror_path, key, segment.offset, segment.length) {
+                match read_range(&self.shards, &mirror_path, key, segment.offset, segment.length) {
                     Ok(bytes) => {
                         self.counters
                             .mirror_bytes
@@ -536,7 +612,7 @@ impl ExpertStore {
                     }
                 }
             }
-            let bytes = read_range(&primary_path, key, segment.offset, segment.length)?;
+            let bytes = read_range(&self.shards, &primary_path, key, segment.offset, segment.length)?;
             self.counters
                 .primary_bytes
                 .fetch_add(segment.length, Ordering::Relaxed);
@@ -580,6 +656,9 @@ impl ExpertStore {
         relative_path: &Path,
         primary_path: &Path,
     ) -> Option<PathBuf> {
+        if self.mirrors.is_empty() {
+            return None;
+        }
         let primary_len = fs::metadata(primary_path).ok()?.len();
         let eligible: Vec<_> = self
             .mirrors
@@ -615,6 +694,7 @@ impl ExpertStore {
 }
 
 fn read_range(
+    shards: &ShardHandlePool,
     path: &Path,
     key: ExpertKey,
     offset: u64,
@@ -625,35 +705,17 @@ fn read_range(
         expected: usize::MAX,
         actual: 0,
     })?;
-    let mut file = File::open(path).map_err(|source| StoreError::Read {
-        key,
-        path: path.to_owned(),
-        source,
-    })?;
-    file.seek(SeekFrom::Start(offset))
+    shards
+        .read_exact_at(path, offset, expected)
         .map_err(|source| StoreError::Read {
             key,
             path: path.to_owned(),
             source,
-        })?;
-    let mut bytes = vec![0; expected];
-    file.read_exact(&mut bytes)
-        .map_err(|source| StoreError::Read {
-            key,
-            path: path.to_owned(),
-            source,
-        })?;
-    if bytes.len() != expected {
-        return Err(StoreError::ShortRead {
-            key,
-            expected,
-            actual: bytes.len(),
-        });
-    }
-    Ok(bytes.into())
+        })
 }
 
 fn read_named_range(
+    shards: &ShardHandlePool,
     path: &Path,
     tensor: &str,
     offset: u64,
@@ -662,27 +724,15 @@ fn read_named_range(
     let expected = usize::try_from(length).map_err(|_| TensorStoreError::Read {
         tensor: tensor.into(),
         path: path.to_owned(),
-        source: std::io::Error::new(std::io::ErrorKind::InvalidData, "tensor is too large"),
+        source: Error::new(ErrorKind::InvalidData, "tensor is too large"),
     })?;
-    let mut file = File::open(path).map_err(|source| TensorStoreError::Read {
-        tensor: tensor.into(),
-        path: path.to_owned(),
-        source,
-    })?;
-    file.seek(SeekFrom::Start(offset))
+    shards
+        .read_exact_at(path, offset, expected)
         .map_err(|source| TensorStoreError::Read {
             tensor: tensor.into(),
             path: path.to_owned(),
             source,
-        })?;
-    let mut bytes = vec![0; expected];
-    file.read_exact(&mut bytes)
-        .map_err(|source| TensorStoreError::Read {
-            tensor: tensor.into(),
-            path: path.to_owned(),
-            source,
-        })?;
-    Ok(bytes.into())
+        })
 }
 
 #[cfg(test)]

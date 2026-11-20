@@ -6,17 +6,21 @@ use std::sync::Mutex;
 
 /// Bump when the package pins or CUDA index change so stale venvs are rebuilt.
 const PROVISION_SCHEMA: u32 = 2;
+// Changes to merge-only dependencies must not invalidate download/train envs.
+const MERGE_RUNTIME_REVISION: u64 = 2;
 const TORCH_CUDA_INDEX: &str = "https://download.pytorch.org/whl/cu128";
 
 static DOWNLOAD_LOCK: Mutex<()> = Mutex::new(());
 static MERGE_LOCK: Mutex<()> = Mutex::new(());
 static TRAIN_LOCK: Mutex<()> = Mutex::new(());
+static VOICE_LOCK: Mutex<()> = Mutex::new(());
 
 fn provision_lock(kind: EnvKind) -> &'static Mutex<()> {
     match kind {
         EnvKind::Download => &DOWNLOAD_LOCK,
         EnvKind::Merge => &MERGE_LOCK,
         EnvKind::Train => &TRAIN_LOCK,
+        EnvKind::Voice => &VOICE_LOCK,
     }
 }
 
@@ -29,6 +33,7 @@ pub enum EnvKind {
     Download,
     Merge,
     Train,
+    Voice,
 }
 
 impl EnvKind {
@@ -37,6 +42,7 @@ impl EnvKind {
             Self::Download => "download-env",
             Self::Merge => "merge-env",
             Self::Train => "train-env",
+            Self::Voice => "voice-env",
         }
     }
 
@@ -45,6 +51,7 @@ impl EnvKind {
             Self::Download => "download",
             Self::Merge => "merge",
             Self::Train => "train",
+            Self::Voice => "voice",
         }
     }
 }
@@ -93,6 +100,14 @@ impl EnvProvisioner {
         self.python_path(&self.download_env_dir())
     }
 
+    pub fn voice_env_dir(&self) -> PathBuf {
+        self.env_dir(EnvKind::Voice)
+    }
+
+    pub fn voice_python_path(&self) -> PathBuf {
+        self.python_path(&self.voice_env_dir())
+    }
+
     pub fn is_train_provisioned(&self) -> bool {
         self.is_provisioned(EnvKind::Train)
     }
@@ -103,6 +118,10 @@ impl EnvProvisioner {
 
     pub fn is_download_provisioned(&self) -> bool {
         self.is_provisioned(EnvKind::Download)
+    }
+
+    pub fn is_voice_provisioned(&self) -> bool {
+        self.is_provisioned(EnvKind::Voice)
     }
 
     pub fn is_provisioned(&self, kind: EnvKind) -> bool {
@@ -122,6 +141,10 @@ impl EnvProvisioner {
 
     pub fn ensure_train(&self) -> Result<PathBuf> {
         self.ensure(EnvKind::Train)
+    }
+
+    pub fn ensure_voice(&self) -> Result<PathBuf> {
+        self.ensure(EnvKind::Voice)
     }
 
     pub fn ensure(&self, kind: EnvKind) -> Result<PathBuf> {
@@ -155,6 +178,7 @@ impl EnvProvisioner {
             "download": self.env_status(EnvKind::Download),
             "merge": self.env_status(EnvKind::Merge),
             "train": self.env_status(EnvKind::Train),
+            "voice": self.env_status(EnvKind::Voice),
         })
     }
 
@@ -185,6 +209,7 @@ impl EnvProvisioner {
         };
         value.get("schema").and_then(Value::as_u64) == Some(PROVISION_SCHEMA as u64)
             && value.get("kind").and_then(Value::as_str) == Some(kind.as_str())
+            && (kind != EnvKind::Merge || value.get("merge_runtime_revision").and_then(Value::as_u64) == Some(MERGE_RUNTIME_REVISION))
     }
 
     fn write_stamp(&self, env_dir: &Path, kind: EnvKind, extra: Value) -> Result<()> {
@@ -216,6 +241,10 @@ impl EnvProvisioner {
         self.locked_provision(EnvKind::Merge)
     }
 
+    pub fn provision_voice(&self) -> Result<()> {
+        self.locked_provision(EnvKind::Voice)
+    }
+
     fn locked_provision(&self, kind: EnvKind) -> Result<()> {
         let _guard = provision_lock(kind)
             .lock()
@@ -228,6 +257,7 @@ impl EnvProvisioner {
             EnvKind::Download => self.provision_download_inner(),
             EnvKind::Merge => self.provision_merge_inner(),
             EnvKind::Train => self.provision_train_inner(),
+            EnvKind::Voice => self.provision_voice_inner(),
         }
     }
 
@@ -342,15 +372,47 @@ impl EnvProvisioner {
             "--python",
             &python,
             "mergekit",
+            // MergeKit 0.0.5.x declares Accelerate ~=1.0.1 and still passes
+            // load_in_4bit/load_in_8bit to Transformers. Transformers 5 both
+            // requires newer Accelerate and removed those loader arguments.
+            "accelerate>=1.0.1,<1.1",
+            "transformers>=4.45.2,<5",
             // pydantic 2.10 breaks mergekit's torch-typed models
             // (ConfiguredModuleArchitecture "not fully defined").
             "pydantic>=2,<2.10",
+            "peft>=0.13",
             "pyyaml",
             "huggingface-hub>=0.34",
             "hf-xet>=1.1.5",
         ])?;
-        self.verify_imports(&self.merge_python_path(), "import mergekit, huggingface_hub")?;
-        self.write_stamp(&env_dir, EnvKind::Merge, json!({}))?;
+        self.verify_imports(&self.merge_python_path(), "import mergekit, accelerate, huggingface_hub, peft, transformers; from transformers.utils.import_utils import is_accelerate_available; assert int(transformers.__version__.split('.')[0]) == 4 and is_accelerate_available(), 'merge env Transformers/Accelerate is incompatible with MergeKit'")?;
+        self.write_stamp(&env_dir, EnvKind::Merge, json!({"merge_runtime_revision": MERGE_RUNTIME_REVISION}))?;
+        Ok(())
+    }
+
+    /// Provision isolated Kokoro-82M + Faster-Whisper local voice runtime using uv.
+    fn provision_voice_inner(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.base_dir)?;
+        let env_dir = self.voice_env_dir();
+        Self::clear_stamp(&env_dir);
+        self.ensure_venv(&env_dir)?;
+        let python = self.voice_python_path().display().to_string();
+        Self::run_uv_cmd(&[
+            "pip",
+            "install",
+            "--python",
+            &python,
+            "kokoro-onnx>=0.4.7",
+            "espeakng-loader>=0.2.4",
+            "soundfile>=0.12",
+            "faster-whisper>=1.1",
+            "huggingface-hub>=0.34",
+        ])?;
+        self.verify_imports(
+            &self.voice_python_path(),
+            "import kokoro_onnx, espeakng_loader, faster_whisper, soundfile, huggingface_hub",
+        )?;
+        self.write_stamp(&env_dir, EnvKind::Voice, json!({}))?;
         Ok(())
     }
 
@@ -362,7 +424,9 @@ impl EnvProvisioner {
     }
 
     fn verify_imports(&self, python: &Path, snippet: &str) -> Result<()> {
-        let output = Command::new(python)
+        let mut c = Command::new(python);
+        crate::apply_hidden_window(&mut c);
+        let output = c
             .args(["-c", snippet])
             .output()
             .map_err(|e| anyhow!("Failed to verify {}: {e}", python.display()))?;
@@ -383,7 +447,9 @@ impl EnvProvisioner {
             "uv"
         };
 
-        let output = Command::new(cmd)
+        let mut c = Command::new(cmd);
+        crate::apply_hidden_window(&mut c);
+        let output = c
             .args(args)
             .output()
             .map_err(|e| anyhow!("Failed to execute uv: {e}. Is uv installed and on PATH?"))?;
@@ -443,6 +509,20 @@ mod tests {
             .unwrap();
         assert!(provisioner.stamp_matches(&tmp, EnvKind::Download));
         assert!(!provisioner.stamp_matches(&tmp, EnvKind::Train));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn merge_dependency_revision_invalidates_only_merge_stamp() {
+        let tmp = std::env::temp_dir().join(format!("sytra-merge-revision-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let provisioner = EnvProvisioner { base_dir: tmp.clone() };
+        provisioner.write_stamp(&tmp, EnvKind::Merge, json!({})).unwrap();
+        assert!(!provisioner.stamp_matches(&tmp, EnvKind::Merge));
+        provisioner.write_stamp(&tmp, EnvKind::Merge, json!({"merge_runtime_revision": MERGE_RUNTIME_REVISION})).unwrap();
+        assert!(provisioner.stamp_matches(&tmp, EnvKind::Merge));
+        provisioner.write_stamp(&tmp, EnvKind::Train, json!({})).unwrap();
+        assert!(provisioner.stamp_matches(&tmp, EnvKind::Train));
         let _ = fs::remove_dir_all(&tmp);
     }
 

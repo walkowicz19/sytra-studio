@@ -6,14 +6,17 @@ mod state;
 
 use sytra_contracts::guider::Guider;
 use sytra_host::{
-    ChatServer, DownloadService, JobRunner, ResourceGuard, RunArchive, BackendResolver,
-    resolve_workspace,
+    ensure_runner_deployed, resolve_workspace, BackendResolver, ChatServer, DownloadService,
+    JobRunner, ResourceGuard, RunArchive, VoiceService,
 };
 
 use crate::state::AppState;
 
 pub fn run() {
     let workspace = resolve_workspace();
+    if let Err(err) = ensure_runner_deployed(&workspace) {
+        eprintln!("failed to deploy embedded runner: {err}");
+    }
     let runs_dir = workspace.join("runs");
     if let Err(err) = std::fs::create_dir_all(&runs_dir) {
         eprintln!("failed to create runs dir: {err}");
@@ -41,6 +44,7 @@ pub fn run() {
     };
     let downloads = DownloadService::new(&workspace);
     let chat = ChatServer::new(&workspace);
+    let voice = VoiceService::new(&workspace);
     let state = AppState {
         archive: std::sync::Mutex::new(RunArchive::new(&runs_dir)),
         runner: std::sync::Mutex::new(JobRunner::new(&workspace)),
@@ -53,6 +57,7 @@ pub fn run() {
         workspace,
         downloads,
         chat,
+        voice,
     };
 
     tauri::Builder::default()
@@ -71,9 +76,11 @@ pub fn run() {
             commands::get_settings,
             commands::set_cache_dir,
             commands::set_main_memory_limit,
+            commands::set_inference_settings,
             commands::guider_recommend,
             commands::merge_check,
             commands::preview_dataset,
+            commands::prepare_dataset,
             commands::publish_run,
             commands::list_catalog,
             commands::download_model,
@@ -83,9 +90,41 @@ pub fn run() {
             commands::get_download_status,
             commands::list_local_models,
             commands::build_moe_index,
+            commands::generate_moe_oracle,
             commands::start_chat_server,
+            commands::get_model_settings,
+            commands::set_model_settings,
             commands::stop_chat_server,
+            commands::chat_server_running,
+            commands::chat_mcp_token,
+            commands::list_chat_skills,
+            commands::read_chat_skill,
+            commands::install_chat_skill,
+            commands::install_chat_skill_file,
+            commands::remove_chat_skill,
             commands::plan_inference,
+            commands::get_mcp_status,
+            commands::install_mcp_clients,
+            commands::uninstall_mcp_clients,
+            commands::discover_chat_targets,
+            commands::start_ollama_daemon,
+            commands::get_ollama_context,
+            commands::chat_http_relay_stream,
+            commands::list_chat_agents,
+            commands::save_chat_agent,
+            commands::delete_chat_agent,
+            commands::list_agent_memories,
+            commands::save_agent_memory,
+            commands::recall_agent_memories,
+            commands::delete_agent_memory,
+            commands::execute_agent_tool,
+            commands::search_web_direct,
+            commands::unload_chat_model,
+            commands::voice_status,
+            commands::setup_kokoro_voice,
+            commands::voice_synthesize,
+            commands::voice_transcribe,
+            commands::stop_voice_engine,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sytra Studio");

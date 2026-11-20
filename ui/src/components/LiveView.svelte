@@ -204,6 +204,9 @@
               {/if}
             {:else if line.type === 'event'}
               <span class="log-event">● {line.event}</span>
+              {#if line.event === 'eval' && typeof line.payload?.loss === 'number'}
+                <span> validation loss=<b>{line.payload.loss.toFixed(4)}</b></span>
+              {/if}
             {:else}
               <span class="log-dim">{line.ts ?? ''}</span>
               <span>{line.line || line.message || ''}</span>

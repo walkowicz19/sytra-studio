@@ -34,7 +34,7 @@ mod platform {
         mem, ptr,
         sync::{
             atomic::{AtomicU64, Ordering},
-            Mutex,
+            Arc, Mutex,
         },
     };
 
@@ -170,12 +170,16 @@ mod platform {
         }
     }
 
+    type VramReclaimer = Arc<dyn Fn() -> u64 + Send + Sync>;
+
     pub struct CudaAccelerator {
         api: CudaApi,
         device: CuDevice,
         context: CuContext,
         allocations: Mutex<HashMap<CuDevicePtr, u64>>,
         kernels: Mutex<HashMap<&'static str, (CuModule, CuFunction)>>,
+        scratch: Mutex<[Option<AcceleratorBuffer>; 4]>,
+        reclaimer: Mutex<Option<VramReclaimer>>,
         memory_budget: u64,
         live_bytes: AtomicU64,
         peak_bytes: AtomicU64,
@@ -230,6 +234,8 @@ mod platform {
                 context,
                 allocations: Mutex::new(HashMap::new()),
                 kernels: Mutex::new(HashMap::new()),
+                scratch: Mutex::new([None, None, None, None]),
+                reclaimer: Mutex::new(None),
                 memory_budget,
                 live_bytes: AtomicU64::new(0),
                 peak_bytes: AtomicU64::new(0),
@@ -246,15 +252,77 @@ mod platform {
             }
         }
 
-        /// Reserve device memory without creating a same-sized host zero buffer.
-        /// Callers must initialize every byte they read through `write_buffer`.
-        pub fn allocate(&self, bytes: usize) -> Result<AcceleratorBuffer, String> {
+        pub fn set_reclaimer(&self, reclaimer: std::sync::Arc<dyn Fn() -> u64 + Send + Sync>) {
+            if let Ok(mut guard) = self.reclaimer.lock() {
+                *guard = Some(reclaimer);
+            }
+        }
+
+        pub fn reserve_scratch(&self, bytes: usize) -> Result<(), String> {
+            if bytes == 0 {
+                return Ok(());
+            }
+            let mut pool = self
+                .scratch
+                .lock()
+                .map_err(|_| "CUDA scratch pool is poisoned".to_string())?;
+            if pool[0].as_ref().is_some_and(|existing| existing.bytes >= bytes) {
+                return Ok(());
+            }
+            if let Some(old) = pool[0].take() {
+                self.release(&old);
+            }
+            let buffer = self.allocate_raw_inner(bytes, false, false)?;
+            pool[0] = Some(buffer);
+            Ok(())
+        }
+
+        fn reclaim_external(&self) -> u64 {
+            let reclaimer = self
+                .reclaimer
+                .lock()
+                .ok()
+                .and_then(|guard| guard.as_ref().cloned());
+            reclaimer.map(|cb| cb()).unwrap_or(0)
+        }
+
+        fn release_scratch(&self) {
+            let buffers = match self.scratch.lock() {
+                Ok(mut pool) => std::mem::replace(&mut *pool, [None, None, None, None]),
+                Err(_) => return,
+            };
+            for buffer in buffers.into_iter().flatten() {
+                self.release(&buffer);
+            }
+        }
+
+        fn allocate_raw(
+            &self,
+            bytes: usize,
+            reclaim_scratch: bool,
+        ) -> Result<AcceleratorBuffer, String> {
+            self.allocate_raw_inner(bytes, reclaim_scratch, true)
+        }
+
+        fn allocate_raw_inner(
+            &self,
+            bytes: usize,
+            reclaim_scratch: bool,
+            reclaim_external: bool,
+        ) -> Result<AcceleratorBuffer, String> {
             if bytes == 0 {
                 return Err("cannot allocate an empty CUDA buffer".into());
             }
             let size =
                 u64::try_from(bytes).map_err(|_| "CUDA allocation size exceeds u64".to_string())?;
             if !reserve_global_bytes(&self.live_bytes, &self.peak_bytes, size, self.memory_budget) {
+                if reclaim_scratch {
+                    self.release_scratch();
+                    return self.allocate_raw_inner(bytes, false, reclaim_external);
+                }
+                if reclaim_external && self.reclaim_external() > 0 {
+                    return self.allocate_raw_inner(bytes, false, false);
+                }
                 self.budget_denials.fetch_add(1, Ordering::AcqRel);
                 return Err(format!(
                     "CUDA allocation needs {size} bytes but the hard device limit is {}",
@@ -269,6 +337,13 @@ mod platform {
             })();
             if let Err(error) = allocation {
                 self.live_bytes.fetch_sub(size, Ordering::AcqRel);
+                if reclaim_scratch {
+                    self.release_scratch();
+                    return self.allocate_raw_inner(bytes, false, reclaim_external);
+                }
+                if reclaim_external && self.reclaim_external() > 0 {
+                    return self.allocate_raw_inner(bytes, false, false);
+                }
                 return Err(error);
             }
             let mut allocations = match self.allocations.lock() {
@@ -283,6 +358,75 @@ mod platform {
             };
             allocations.insert(pointer, size);
             Ok(AcceleratorBuffer { id: pointer, bytes })
+        }
+
+        /// Reserve device memory without creating a same-sized host zero buffer.
+        /// Callers must initialize every byte they read through `write_buffer`.
+        pub fn allocate(&self, bytes: usize) -> Result<AcceleratorBuffer, String> {
+            self.allocate_raw(bytes, true)
+        }
+
+        fn with_scratch_buffers<F>(
+            &self,
+            uploads: &[&[u8]],
+            output_bytes: usize,
+            run: F,
+        ) -> Result<Vec<f32>, String>
+        where
+            F: FnOnce(&[CuDevicePtr], CuDevicePtr) -> Result<Vec<f32>, String>,
+        {
+            if uploads.len() > 3 || output_bytes == 0 {
+                return Err("invalid CUDA scratch buffer request".into());
+            }
+            let mut pool = self
+                .scratch
+                .lock()
+                .map_err(|_| "CUDA scratch pool is poisoned".to_string())?;
+            let ensure_slot = |pool: &mut [Option<AcceleratorBuffer>; 4],
+                               slot: usize,
+                               needed: usize,
+                               protected_end: usize|
+             -> Result<CuDevicePtr, String> {
+                if let Some(existing) = pool[slot].as_ref() {
+                    if existing.bytes >= needed {
+                        return Ok(existing.id);
+                    }
+                }
+                if let Some(old) = pool[slot].take() {
+                    self.release(&old);
+                }
+                let buffer = match self.allocate_raw(needed, false) {
+                    Ok(buffer) => buffer,
+                    Err(_) => {
+                        for other in 0..pool.len() {
+                            if other != slot && other >= protected_end {
+                                if let Some(old) = pool[other].take() {
+                                    self.release(&old);
+                                }
+                            }
+                        }
+                        self.allocate_raw(needed, false)?
+                    }
+                };
+                let ptr = buffer.id;
+                pool[slot] = Some(buffer);
+                Ok(ptr)
+            };
+
+            let mut input_ptrs = [0_u64; 3];
+            for (slot, payload) in uploads.iter().enumerate() {
+                if payload.is_empty() {
+                    return Err("cannot upload an empty scratch payload".into());
+                }
+                let _ = ensure_slot(&mut pool, slot, payload.len(), slot)?;
+                let buffer = pool[slot]
+                    .as_ref()
+                    .ok_or_else(|| "CUDA scratch buffer is missing".to_string())?;
+                self.write_buffer(buffer, 0, payload)?;
+                input_ptrs[slot] = buffer.id;
+            }
+            let output_ptr = ensure_slot(&mut pool, 3, output_bytes, uploads.len())?;
+            run(&input_ptrs[..uploads.len()], output_ptr)
         }
 
         /// Update one validated byte range inside a live CUDA allocation.
@@ -381,49 +525,13 @@ mod platform {
             {
                 return Err("invalid CUDA INT4 group-32 matvec dimensions".into());
             }
-            let packed_bytes = as_bytes(packed);
-            let scale_bytes = as_bytes(scales);
-            let input_bytes = as_bytes(input);
-            let output_zero = vec![0.0_f32; rows];
-            let packed_buffer = self.upload(ExpertKey::new(0, 0), packed_bytes)?;
-            let scale_buffer = match self.upload(ExpertKey::new(0, 1), scale_bytes) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&packed_buffer);
-                    return Err(error);
-                }
-            };
-            let input_buffer = match self.upload(ExpertKey::new(0, 2), input_bytes) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&scale_buffer);
-                    self.release(&packed_buffer);
-                    return Err(error);
-                }
-            };
-            let output_buffer = match self.upload(ExpertKey::new(0, 3), as_bytes(&output_zero)) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&input_buffer);
-                    self.release(&scale_buffer);
-                    self.release(&packed_buffer);
-                    return Err(error);
-                }
-            };
-
-            let result = self.launch_int4_group32(
-                packed_buffer.id,
-                scale_buffer.id,
-                input_buffer.id,
-                output_buffer.id,
-                rows,
-                cols,
-            );
-            self.release(&output_buffer);
-            self.release(&input_buffer);
-            self.release(&scale_buffer);
-            self.release(&packed_buffer);
-            result
+            self.with_scratch_buffers(
+                &[as_bytes(packed), as_bytes(scales), as_bytes(input)],
+                rows * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_int4_group32(ptrs[0], ptrs[1], ptrs[2], output_ptr, rows, cols)
+                },
+            )
         }
 
         /// Same reference kernel with the checkpoint's native BF16 scale
@@ -445,40 +553,76 @@ mod platform {
             {
                 return Err("invalid CUDA INT4/BF16 group-32 matvec dimensions".into());
             }
-            let output_zero = vec![0.0_f32; rows];
-            let payloads = [
-                as_bytes(packed),
-                as_bytes(scales),
-                as_bytes(input),
-                as_bytes(&output_zero),
-            ];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result = self.launch_int4_group32_bf16(
-                buffers[0].id,
-                buffers[1].id,
-                buffers[2].id,
-                buffers[3].id,
-                rows,
-                cols,
-            );
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.with_scratch_buffers(
+                &[as_bytes(packed), as_bytes(scales), as_bytes(input)],
+                rows * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_int4_group32_bf16(
+                        ptrs[0],
+                        ptrs[1],
+                        ptrs[2],
+                        output_ptr,
+                        rows,
+                        cols,
+                    )
+                },
+            )
         }
 
         /// Batched packed INT4/BF16 projection with position-major FP32
+        /// activations and explicit group size (`32`, `64`, `128`, `256`).
+        pub fn int4_group_bf16_bytes_matmul(
+            &self,
+            packed: &[u8],
+            scales: &[u8],
+            rows: usize,
+            cols: usize,
+            group_size: usize,
+            positions: usize,
+            input: &[f32],
+        ) -> Result<Vec<f32>, String> {
+            if rows == 0 || cols == 0 || group_size == 0 || positions == 0 || !cols.is_multiple_of(group_size) {
+                return Err("invalid CUDA INT4/BF16 batched matmul dimensions".into());
+            }
+            let packed_bytes = rows
+                .checked_mul(cols.div_ceil(8))
+                .and_then(|words| words.checked_mul(size_of::<u32>()))
+                .ok_or_else(|| "packed INT4 batch size overflow".to_string())?;
+            let scale_bytes = rows
+                .checked_mul(cols / group_size)
+                .and_then(|values| values.checked_mul(size_of::<u16>()))
+                .ok_or_else(|| "BF16 scale batch size overflow".to_string())?;
+            let input_elements = positions
+                .checked_mul(cols)
+                .ok_or_else(|| "INT4 batch input size overflow".to_string())?;
+            let output_elements = positions
+                .checked_mul(rows)
+                .ok_or_else(|| "INT4 batch output size overflow".to_string())?;
+            if packed.len() != packed_bytes
+                || scales.len() != scale_bytes
+                || input.len() != input_elements
+            {
+                return Err("invalid CUDA INT4/BF16 batched matmul dimensions".into());
+            }
+            self.with_scratch_buffers(
+                &[packed, scales, as_bytes(input)],
+                output_elements * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_int4_group_bf16_matmul(
+                        ptrs[0],
+                        ptrs[1],
+                        ptrs[2],
+                        output_ptr,
+                        rows,
+                        cols,
+                        group_size,
+                        positions,
+                    )
+                },
+            )
+        }
+
+        /// Batched packed INT4/BF16 group-32 projection with position-major FP32
         /// activations. Packed weights and scales are uploaded once for the
         /// complete batch instead of once per speculative position.
         pub fn int4_group32_bf16_bytes_matmul(
@@ -490,57 +634,7 @@ mod platform {
             positions: usize,
             input: &[f32],
         ) -> Result<Vec<f32>, String> {
-            let packed_bytes = rows
-                .checked_mul(cols.div_ceil(8))
-                .and_then(|words| words.checked_mul(size_of::<u32>()))
-                .ok_or_else(|| "packed INT4 batch size overflow".to_string())?;
-            let scale_bytes = rows
-                .checked_mul(cols / 32)
-                .and_then(|values| values.checked_mul(size_of::<u16>()))
-                .ok_or_else(|| "BF16 scale batch size overflow".to_string())?;
-            let input_elements = positions
-                .checked_mul(cols)
-                .ok_or_else(|| "INT4 batch input size overflow".to_string())?;
-            let output_elements = positions
-                .checked_mul(rows)
-                .ok_or_else(|| "INT4 batch output size overflow".to_string())?;
-            if rows == 0
-                || cols == 0
-                || positions == 0
-                || cols % 32 != 0
-                || packed.len() != packed_bytes
-                || scales.len() != scale_bytes
-                || input.len() != input_elements
-            {
-                return Err("invalid CUDA INT4/BF16 batched matmul dimensions".into());
-            }
-            let output_zero = vec![0.0_f32; output_elements];
-            let payloads = [packed, scales, as_bytes(input), as_bytes(&output_zero)];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result = self.launch_int4_group32_bf16_matmul(
-                buffers[0].id,
-                buffers[1].id,
-                buffers[2].id,
-                buffers[3].id,
-                rows,
-                cols,
-                positions,
-            );
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.int4_group_bf16_bytes_matmul(packed, scales, rows, cols, 32, positions, input)
         }
 
         /// Execute a packed INT4/BF16 projection directly from a byte range
@@ -556,69 +650,40 @@ mod platform {
             cols: usize,
             input: &[f32],
         ) -> Result<Vec<f32>, String> {
-            if rows == 0 || cols == 0 || cols % 32 != 0 || input.len() != cols {
-                return Err("invalid resident CUDA INT4/BF16 matvec dimensions".into());
-            }
-            let packed_bytes = rows
-                .checked_mul(cols.div_ceil(8))
-                .and_then(|words| words.checked_mul(size_of::<u32>()))
-                .ok_or_else(|| "resident packed tensor size overflow".to_string())?;
-            let scale_bytes = rows
-                .checked_mul(cols / 32)
-                .and_then(|values| values.checked_mul(size_of::<u16>()))
-                .ok_or_else(|| "resident scale tensor size overflow".to_string())?;
-            if packed_offset
-                .checked_add(packed_bytes)
-                .filter(|end| *end <= resident.bytes)
-                .is_none()
-                || scale_offset
-                    .checked_add(scale_bytes)
-                    .filter(|end| *end <= resident.bytes)
-                    .is_none()
-            {
-                return Err("resident expert tensor range exceeds its CUDA allocation".into());
-            }
-            let output_zero = vec![0.0_f32; rows];
-            let input_buffer = self.upload(ExpertKey::new(0, 0), as_bytes(input))?;
-            let output_buffer = match self.upload(ExpertKey::new(0, 1), as_bytes(&output_zero)) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&input_buffer);
-                    return Err(error);
-                }
-            };
-            let result = self.launch_int4_group32_bf16(
-                resident.id + packed_offset as u64,
-                resident.id + scale_offset as u64,
-                input_buffer.id,
-                output_buffer.id,
+            self.resident_int4_group_bf16_matmul(
+                resident,
+                packed_offset,
+                scale_offset,
                 rows,
                 cols,
-            );
-            self.release(&output_buffer);
-            self.release(&input_buffer);
-            result
+                32,
+                1,
+                input,
+            )
         }
 
-        /// Batched counterpart to the resident matvec. The expert allocation
-        /// remains in place; only gathered activations and outputs are
-        /// transient.
-        pub fn resident_int4_group32_bf16_matmul(
+        /// Batched counterpart to the resident matvec with explicit group size.
+        #[allow(clippy::too_many_arguments)]
+        pub fn resident_int4_group_bf16_matmul(
             &self,
             resident: &AcceleratorBuffer,
             packed_offset: usize,
             scale_offset: usize,
             rows: usize,
             cols: usize,
+            group_size: usize,
             positions: usize,
             input: &[f32],
         ) -> Result<Vec<f32>, String> {
+            if rows == 0 || cols == 0 || group_size == 0 || positions == 0 || !cols.is_multiple_of(group_size) {
+                return Err("invalid resident CUDA INT4/BF16 batched matmul dimensions".into());
+            }
             let packed_bytes = rows
                 .checked_mul(cols.div_ceil(8))
                 .and_then(|words| words.checked_mul(size_of::<u32>()))
                 .ok_or_else(|| "resident packed tensor size overflow".to_string())?;
             let scale_bytes = rows
-                .checked_mul(cols / 32)
+                .checked_mul(cols / group_size)
                 .and_then(|values| values.checked_mul(size_of::<u16>()))
                 .ok_or_else(|| "resident scale tensor size overflow".to_string())?;
             let input_elements = positions
@@ -627,11 +692,7 @@ mod platform {
             let output_elements = positions
                 .checked_mul(rows)
                 .ok_or_else(|| "resident INT4 batch output overflow".to_string())?;
-            if rows == 0
-                || cols == 0
-                || positions == 0
-                || cols % 32 != 0
-                || input.len() != input_elements
+            if input.len() != input_elements
                 || packed_offset
                     .checked_add(packed_bytes)
                     .filter(|end| *end <= resident.bytes)
@@ -643,27 +704,47 @@ mod platform {
             {
                 return Err("invalid resident CUDA INT4/BF16 batched matmul dimensions".into());
             }
-            let output_zero = vec![0.0_f32; output_elements];
-            let input_buffer = self.upload(ExpertKey::new(0, 0), as_bytes(input))?;
-            let output_buffer = match self.upload(ExpertKey::new(0, 1), as_bytes(&output_zero)) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&input_buffer);
-                    return Err(error);
-                }
-            };
-            let result = self.launch_int4_group32_bf16_matmul(
-                resident.id + packed_offset as u64,
-                resident.id + scale_offset as u64,
-                input_buffer.id,
-                output_buffer.id,
+            self.with_scratch_buffers(
+                &[as_bytes(input)],
+                output_elements * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_int4_group_bf16_matmul(
+                        resident.id + packed_offset as u64,
+                        resident.id + scale_offset as u64,
+                        ptrs[0],
+                        output_ptr,
+                        rows,
+                        cols,
+                        group_size,
+                        positions,
+                    )
+                },
+            )
+        }
+
+        /// Batched counterpart to the resident matvec (group-32). The expert
+        /// allocation remains in place; only gathered activations and outputs
+        /// are transient.
+        pub fn resident_int4_group32_bf16_matmul(
+            &self,
+            resident: &AcceleratorBuffer,
+            packed_offset: usize,
+            scale_offset: usize,
+            rows: usize,
+            cols: usize,
+            positions: usize,
+            input: &[f32],
+        ) -> Result<Vec<f32>, String> {
+            self.resident_int4_group_bf16_matmul(
+                resident,
+                packed_offset,
+                scale_offset,
                 rows,
                 cols,
+                32,
                 positions,
-            );
-            self.release(&output_buffer);
-            self.release(&input_buffer);
-            result
+                input,
+            )
         }
 
         /// Portable BF16 weight / FP32 activation matrix-vector product.
@@ -676,33 +757,7 @@ mod platform {
             cols: usize,
             input: &[f32],
         ) -> Result<Vec<f32>, String> {
-            let expected = rows
-                .checked_mul(cols)
-                .and_then(|elements| elements.checked_mul(2))
-                .ok_or_else(|| "BF16 matrix size overflow".to_string())?;
-            if rows == 0 || cols == 0 || input.len() != cols || weights_bf16.len() != expected {
-                return Err("invalid CUDA BF16 matvec dimensions".into());
-            }
-            let output_zero = vec![0.0_f32; rows];
-            let payloads = [weights_bf16, as_bytes(input), as_bytes(&output_zero)];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result =
-                self.launch_bf16_matvec(buffers[0].id, buffers[1].id, buffers[2].id, rows, cols);
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.bf16_matmul_bytes(weights_bf16, rows, cols, 1, input)
         }
 
         /// Position-major batched BF16 matrix multiplication used by target
@@ -733,32 +788,13 @@ mod platform {
             {
                 return Err("invalid CUDA BF16 batched matmul dimensions".into());
             }
-            let output_zero = vec![0.0_f32; output_elements];
-            let payloads = [weights_bf16, as_bytes(input), as_bytes(&output_zero)];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result = self.launch_bf16_matmul(
-                buffers[0].id,
-                buffers[1].id,
-                buffers[2].id,
-                rows,
-                cols,
-                positions,
-            );
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.with_scratch_buffers(
+                &[weights_bf16, as_bytes(input)],
+                output_elements * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_bf16_matmul(ptrs[0], ptrs[1], output_ptr, rows, cols, positions)
+                },
+            )
         }
 
         /// Execute a BF16 matrix batch directly from a tensor range inside an
@@ -794,26 +830,20 @@ mod platform {
             {
                 return Err("invalid resident CUDA BF16 batched matmul dimensions".into());
             }
-            let output_zero = vec![0.0_f32; output_elements];
-            let input_buffer = self.upload(ExpertKey::new(0, 0), as_bytes(input))?;
-            let output_buffer = match self.upload(ExpertKey::new(0, 1), as_bytes(&output_zero)) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&input_buffer);
-                    return Err(error);
-                }
-            };
-            let result = self.launch_bf16_matmul(
-                resident.id + weight_offset as u64,
-                input_buffer.id,
-                output_buffer.id,
-                rows,
-                cols,
-                positions,
-            );
-            self.release(&output_buffer);
-            self.release(&input_buffer);
-            result
+            self.with_scratch_buffers(
+                &[as_bytes(input)],
+                output_elements * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_bf16_matmul(
+                        resident.id + weight_offset as u64,
+                        ptrs[0],
+                        output_ptr,
+                        rows,
+                        cols,
+                        positions,
+                    )
+                },
+            )
         }
 
         /// Portable transpose BF16 weight / FP32 activation product used by
@@ -825,38 +855,7 @@ mod platform {
             cols: usize,
             input: &[f32],
         ) -> Result<Vec<f32>, String> {
-            let expected = rows
-                .checked_mul(cols)
-                .and_then(|elements| elements.checked_mul(2))
-                .ok_or_else(|| "BF16 transpose matrix size overflow".to_string())?;
-            if rows == 0 || cols == 0 || input.len() != rows || weights_bf16.len() != expected {
-                return Err("invalid CUDA BF16 transpose matvec dimensions".into());
-            }
-            let output_zero = vec![0.0_f32; cols];
-            let payloads = [weights_bf16, as_bytes(input), as_bytes(&output_zero)];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result = self.launch_bf16_transpose_matvec(
-                buffers[0].id,
-                buffers[1].id,
-                buffers[2].id,
-                rows,
-                cols,
-            );
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.bf16_transpose_matmul_bytes(weights_bf16, rows, cols, 1, input)
         }
 
         pub fn bf16_transpose_matmul_bytes(
@@ -885,32 +884,20 @@ mod platform {
             {
                 return Err("invalid CUDA BF16 transpose batched matmul dimensions".into());
             }
-            let output_zero = vec![0.0_f32; output_elements];
-            let payloads = [weights_bf16, as_bytes(input), as_bytes(&output_zero)];
-            let mut buffers = Vec::with_capacity(payloads.len());
-            for (index, payload) in payloads.into_iter().enumerate() {
-                match self.upload(ExpertKey::new(0, index as u32), payload) {
-                    Ok(buffer) => buffers.push(buffer),
-                    Err(error) => {
-                        for buffer in buffers.iter().rev() {
-                            self.release(buffer);
-                        }
-                        return Err(error);
-                    }
-                }
-            }
-            let result = self.launch_bf16_transpose_matmul(
-                buffers[0].id,
-                buffers[1].id,
-                buffers[2].id,
-                rows,
-                cols,
-                positions,
-            );
-            for buffer in buffers.iter().rev() {
-                self.release(buffer);
-            }
-            result
+            self.with_scratch_buffers(
+                &[weights_bf16, as_bytes(input)],
+                output_elements * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_bf16_transpose_matmul(
+                        ptrs[0],
+                        ptrs[1],
+                        output_ptr,
+                        rows,
+                        cols,
+                        positions,
+                    )
+                },
+            )
         }
 
         /// Correctness-first GPU execution of one Kimi routed expert.
@@ -961,31 +948,25 @@ mod platform {
             {
                 return Err("invalid CUDA BF16 standard-attention dimensions".into());
             }
-            let output = vec![0.0_f32; heads * value_dim];
-            let query_buffer = self.upload(ExpertKey::new(0, 0), as_bytes(query))?;
-            let output_buffer = match self.upload(ExpertKey::new(0, 1), as_bytes(&output)) {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    self.release(&query_buffer);
-                    return Err(error);
-                }
-            };
-            let result = self.launch_standard_attention_bf16(
-                keys.id,
-                values.id,
-                query_buffer.id,
-                output_buffer.id,
-                cache_len,
-                heads,
-                kv_heads,
-                head_dim,
-                value_dim,
-                softmax_scale,
-                window.unwrap_or(0),
-            );
-            self.release(&output_buffer);
-            self.release(&query_buffer);
-            result
+            self.with_scratch_buffers(
+                &[as_bytes(query)],
+                heads * value_dim * size_of::<f32>(),
+                |ptrs, output_ptr| {
+                    self.launch_standard_attention_bf16(
+                        keys.id,
+                        values.id,
+                        ptrs[0],
+                        output_ptr,
+                        cache_len,
+                        heads,
+                        kv_heads,
+                        head_dim,
+                        value_dim,
+                        softmax_scale,
+                        window.unwrap_or(0),
+                    )
+                },
+            )
         }
 
         pub fn expert_swiglu_bf16(
@@ -1161,7 +1142,8 @@ mod platform {
             }
         }
 
-        fn launch_int4_group32_bf16_matmul(
+        #[allow(clippy::too_many_arguments)]
+        fn launch_int4_group_bf16_matmul(
             &self,
             packed: CuDevicePtr,
             scales: CuDevicePtr,
@@ -1169,12 +1151,15 @@ mod platform {
             output: CuDevicePtr,
             rows: usize,
             cols: usize,
+            group_size: usize,
             positions: usize,
         ) -> Result<Vec<f32>, String> {
             let rows_u32 =
                 u32::try_from(rows).map_err(|_| "row count exceeds CUDA u32".to_string())?;
             let cols_u32 =
                 u32::try_from(cols).map_err(|_| "column count exceeds CUDA u32".to_string())?;
+            let group_u32 =
+                u32::try_from(group_size).map_err(|_| "group size exceeds CUDA u32".to_string())?;
             let positions_u32 = u32::try_from(positions)
                 .map_err(|_| "position count exceeds CUDA u32".to_string())?;
             let output_elements = rows
@@ -1183,9 +1168,9 @@ mod platform {
             let output_u32 = u32::try_from(output_elements)
                 .map_err(|_| "INT4 batch output exceeds CUDA u32".to_string())?;
             let function = self.kernel_function(
-                "int4_group32_bf16_matmul",
-                INT4_GROUP32_BF16_MATMUL_PTX,
-                c"sytra_int4_group32_bf16_matmul".as_ptr(),
+                "int4_group_bf16_matmul",
+                INT4_GROUP_BF16_MATMUL_PTX,
+                c"sytra_int4_group_bf16_matmul".as_ptr(),
             )?;
             unsafe {
                 check((self.api.ctx_set_current)(self.context), "cuCtxSetCurrent")?;
@@ -1197,6 +1182,7 @@ mod platform {
                     let mut rows_arg = rows_u32;
                     let mut cols_arg = cols_u32;
                     let mut positions_arg = positions_u32;
+                    let mut group_arg = group_u32;
                     let mut arguments = [
                         (&mut packed_arg as *mut CuDevicePtr).cast::<c_void>(),
                         (&mut scales_arg as *mut CuDevicePtr).cast::<c_void>(),
@@ -1205,12 +1191,14 @@ mod platform {
                         (&mut rows_arg as *mut u32).cast::<c_void>(),
                         (&mut cols_arg as *mut u32).cast::<c_void>(),
                         (&mut positions_arg as *mut u32).cast::<c_void>(),
+                        (&mut group_arg as *mut u32).cast::<c_void>(),
                     ];
                     let threads = 128_u32;
+                    let warps_per_block = 4_u32;
                     check(
                         (self.api.launch_kernel)(
                             function,
-                            output_u32.div_ceil(threads),
+                            output_u32.div_ceil(warps_per_block),
                             1,
                             1,
                             threads,
@@ -1230,136 +1218,6 @@ mod platform {
                             result.as_mut_ptr().cast(),
                             output,
                             output_elements * size_of::<f32>(),
-                        ),
-                        "cuMemcpyDtoH",
-                    )?;
-                    Ok(result)
-                })();
-                operation
-            }
-        }
-
-        fn launch_bf16_matvec(
-            &self,
-            weights: CuDevicePtr,
-            input: CuDevicePtr,
-            output: CuDevicePtr,
-            rows: usize,
-            cols: usize,
-        ) -> Result<Vec<f32>, String> {
-            let rows_u32 =
-                u32::try_from(rows).map_err(|_| "row count exceeds CUDA u32".to_string())?;
-            let cols_u32 =
-                u32::try_from(cols).map_err(|_| "column count exceeds CUDA u32".to_string())?;
-            let function = self.kernel_function(
-                "bf16_matvec",
-                BF16_MATVEC_PTX,
-                c"sytra_bf16_matvec".as_ptr(),
-            )?;
-            unsafe {
-                check((self.api.ctx_set_current)(self.context), "cuCtxSetCurrent")?;
-                let operation = (|| {
-                    let mut weights_arg = weights;
-                    let mut input_arg = input;
-                    let mut output_arg = output;
-                    let mut rows_arg = rows_u32;
-                    let mut cols_arg = cols_u32;
-                    let mut arguments = [
-                        (&mut weights_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut input_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut output_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut rows_arg as *mut u32).cast::<c_void>(),
-                        (&mut cols_arg as *mut u32).cast::<c_void>(),
-                    ];
-                    let threads = 128_u32;
-                    check(
-                        (self.api.launch_kernel)(
-                            function,
-                            rows_u32.div_ceil(threads),
-                            1,
-                            1,
-                            threads,
-                            1,
-                            1,
-                            0,
-                            ptr::null_mut(),
-                            arguments.as_mut_ptr(),
-                            ptr::null_mut(),
-                        ),
-                        "cuLaunchKernel(BF16 matvec)",
-                    )?;
-                    check((self.api.ctx_synchronize)(), "cuCtxSynchronize")?;
-                    let mut result = vec![0.0_f32; rows];
-                    check(
-                        (self.api.memcpy_dtoh)(
-                            result.as_mut_ptr().cast(),
-                            output,
-                            rows * size_of::<f32>(),
-                        ),
-                        "cuMemcpyDtoH",
-                    )?;
-                    Ok(result)
-                })();
-                operation
-            }
-        }
-
-        fn launch_bf16_transpose_matvec(
-            &self,
-            weights: CuDevicePtr,
-            input: CuDevicePtr,
-            output: CuDevicePtr,
-            rows: usize,
-            cols: usize,
-        ) -> Result<Vec<f32>, String> {
-            let rows_u32 =
-                u32::try_from(rows).map_err(|_| "row count exceeds CUDA u32".to_string())?;
-            let cols_u32 =
-                u32::try_from(cols).map_err(|_| "column count exceeds CUDA u32".to_string())?;
-            let function = self.kernel_function(
-                "bf16_transpose_matvec",
-                BF16_MATVEC_PTX,
-                c"sytra_bf16_transpose_matvec".as_ptr(),
-            )?;
-            unsafe {
-                check((self.api.ctx_set_current)(self.context), "cuCtxSetCurrent")?;
-                let operation = (|| {
-                    let mut weights_arg = weights;
-                    let mut input_arg = input;
-                    let mut output_arg = output;
-                    let mut rows_arg = rows_u32;
-                    let mut cols_arg = cols_u32;
-                    let mut arguments = [
-                        (&mut weights_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut input_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut output_arg as *mut CuDevicePtr).cast::<c_void>(),
-                        (&mut rows_arg as *mut u32).cast::<c_void>(),
-                        (&mut cols_arg as *mut u32).cast::<c_void>(),
-                    ];
-                    let threads = 128_u32;
-                    check(
-                        (self.api.launch_kernel)(
-                            function,
-                            cols_u32.div_ceil(threads),
-                            1,
-                            1,
-                            threads,
-                            1,
-                            1,
-                            0,
-                            ptr::null_mut(),
-                            arguments.as_mut_ptr(),
-                            ptr::null_mut(),
-                        ),
-                        "cuLaunchKernel(BF16 transpose matvec)",
-                    )?;
-                    check((self.api.ctx_synchronize)(), "cuCtxSynchronize")?;
-                    let mut result = vec![0.0_f32; cols];
-                    check(
-                        (self.api.memcpy_dtoh)(
-                            result.as_mut_ptr().cast(),
-                            output,
-                            cols * size_of::<f32>(),
                         ),
                         "cuMemcpyDtoH",
                     )?;
@@ -1409,10 +1267,11 @@ mod platform {
                     (&mut positions_arg as *mut u32).cast::<c_void>(),
                 ];
                 let threads = 128_u32;
+                let warps_per_block = 4_u32;
                 check(
                     (self.api.launch_kernel)(
                         function,
-                        outputs.div_ceil(threads),
+                        outputs.div_ceil(warps_per_block),
                         1,
                         1,
                         threads,
@@ -1934,28 +1793,29 @@ DONE_BF16:
 }
 "#;
 
-    // One thread computes one (position, output-row) pair. Weight rows and
-    // BF16 scales are shared by every position in the launch.
-    const INT4_GROUP32_BF16_MATMUL_PTX: &[u8] = br#"
+    // One warp (32 lanes) computes one (position, output-row) pair cooperatively.
+    // Weight words (8 INT4 nibbles each) and activations are loaded coalesced.
+    const INT4_GROUP_BF16_MATMUL_PTX: &[u8] = br#"
 .version 7.1
 .target sm_70
 .address_size 64
 
-.visible .entry sytra_int4_group32_bf16_matmul(
+.visible .entry sytra_int4_group_bf16_matmul(
     .param .u64 p_packed,
     .param .u64 p_scales,
     .param .u64 p_input,
     .param .u64 p_output,
     .param .u32 p_rows,
     .param .u32 p_cols,
-    .param .u32 p_positions
+    .param .u32 p_positions,
+    .param .u32 p_group_size
 )
 {
-    .reg .pred %p<2>;
+    .reg .pred %p<3>;
     .reg .b16 %rs<2>;
     .reg .b32 %r<32>;
-    .reg .b64 %rd<16>;
-    .reg .f32 %f<8>;
+    .reg .b64 %rd<18>;
+    .reg .f32 %f<18>;
 
     ld.param.u64 %rd1, [p_packed];
     ld.param.u64 %rd2, [p_scales];
@@ -1964,58 +1824,128 @@ DONE_BF16:
     ld.param.u32 %r1, [p_rows];
     ld.param.u32 %r2, [p_cols];
     ld.param.u32 %r3, [p_positions];
-    mov.u32 %r4, %ctaid.x;
-    mov.u32 %r5, %ntid.x;
-    mov.u32 %r6, %tid.x;
-    mad.lo.s32 %r7, %r4, %r5, %r6;
-    mul.lo.u32 %r8, %r1, %r3;
-    setp.ge.u32 %p1, %r7, %r8;
+    ld.param.u32 %r4, [p_group_size];
+    mov.u32 %r5, %ctaid.x;
+    mov.u32 %r6, %ntid.x;
+    mov.u32 %r7, %tid.x;
+    mad.lo.u32 %r8, %r5, %r6, %r7;
+    shr.u32 %r9, %r8, 5;
+    and.b32 %r10, %r8, 31;
+    mul.lo.u32 %r11, %r1, %r3;
+    setp.ge.u32 %p1, %r9, %r11;
     @%p1 bra DONE_BATCH;
-    div.u32 %r9, %r7, %r1;
-    rem.u32 %r10, %r7, %r1;
+    div.u32 %r12, %r9, %r1;
+    rem.u32 %r13, %r9, %r1;
+    shr.u32 %r14, %r2, 3;
+    div.u32 %r15, %r2, %r4;
+    mul.wide.u32 %rd5, %r13, %r14;
+    mul.wide.u32 %rd6, %r13, %r15;
+    mul.wide.u32 %rd7, %r12, %r2;
     mov.f32 %f1, 0f00000000;
-    mov.u32 %r11, 0;
-    div.u32 %r12, %r2, 8;
-    div.u32 %r13, %r2, 32;
+    mov.u32 %r16, %r10;
 
 LOOP_BATCH:
-    setp.ge.u32 %p1, %r11, %r2;
-    @%p1 bra STORE_BATCH;
-    mul.lo.u32 %r14, %r10, %r12;
-    div.u32 %r15, %r11, 8;
-    add.u32 %r16, %r14, %r15;
-    mul.wide.u32 %rd5, %r16, 4;
-    add.s64 %rd6, %rd1, %rd5;
-    ld.global.u32 %r17, [%rd6];
-    and.b32 %r18, %r11, 7;
-    shl.b32 %r19, %r18, 2;
-    shr.u32 %r20, %r17, %r19;
-    and.b32 %r21, %r20, 15;
-    sub.s32 %r22, %r21, 8;
-    cvt.rn.f32.s32 %f2, %r22;
-    mul.lo.u32 %r23, %r10, %r13;
-    div.u32 %r24, %r11, 32;
-    add.u32 %r25, %r23, %r24;
-    mul.wide.u32 %rd7, %r25, 2;
-    add.s64 %rd8, %rd2, %rd7;
-    ld.global.u16 %rs1, [%rd8];
-    cvt.u32.u16 %r28, %rs1;
-    shl.b32 %r29, %r28, 16;
-    mov.b32 %f3, %r29;
-    mul.lo.u32 %r26, %r9, %r2;
-    add.u32 %r27, %r26, %r11;
-    mul.wide.u32 %rd9, %r27, 4;
-    add.s64 %rd10, %rd3, %rd9;
-    ld.global.f32 %f4, [%rd10];
-    mul.f32 %f5, %f2, %f3;
-    fma.rn.f32 %f1, %f5, %f4, %f1;
-    add.u32 %r11, %r11, 1;
+    setp.ge.u32 %p1, %r16, %r14;
+    @%p1 bra REDUCE_BATCH;
+    cvt.u64.u32 %rd8, %r16;
+    add.u64 %rd9, %rd5, %rd8;
+    shl.b64 %rd9, %rd9, 2;
+    add.s64 %rd10, %rd1, %rd9;
+    ld.global.u32 %r17, [%rd10];
+    shl.b32 %r18, %r16, 3;
+    div.u32 %r19, %r18, %r4;
+    cvt.u64.u32 %rd11, %r19;
+    add.u64 %rd12, %rd6, %rd11;
+    shl.b64 %rd12, %rd12, 1;
+    add.s64 %rd13, %rd2, %rd12;
+    ld.global.u16 %rs1, [%rd13];
+    cvt.u32.u16 %r20, %rs1;
+    shl.b32 %r21, %r20, 16;
+    mov.b32 %f2, %r21;
+    cvt.u64.u32 %rd14, %r18;
+    add.u64 %rd15, %rd7, %rd14;
+    shl.b64 %rd15, %rd15, 2;
+    add.s64 %rd16, %rd3, %rd15;
+    ld.global.v4.f32 {%f10, %f11, %f12, %f13}, [%rd16];
+    ld.global.v4.f32 {%f14, %f15, %f16, %f17}, [%rd16 + 16];
+    and.b32 %r22, %r17, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f10, %f1;
+    shr.u32 %r24, %r17, 4;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f11, %f1;
+    shr.u32 %r24, %r17, 8;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f12, %f1;
+    shr.u32 %r24, %r17, 12;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f13, %f1;
+    shr.u32 %r24, %r17, 16;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f14, %f1;
+    shr.u32 %r24, %r17, 20;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f15, %f1;
+    shr.u32 %r24, %r17, 24;
+    and.b32 %r22, %r24, 15;
+    sub.s32 %r23, %r22, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f16, %f1;
+    shr.u32 %r24, %r17, 28;
+    sub.s32 %r23, %r24, 8;
+    cvt.rn.f32.s32 %f3, %r23;
+    mul.f32 %f4, %f3, %f2;
+    fma.rn.f32 %f1, %f4, %f17, %f1;
+    add.u32 %r16, %r16, 32;
     bra LOOP_BATCH;
 
+REDUCE_BATCH:
+    mov.b32 %r25, %f1;
+    shfl.sync.bfly.b32 %r26, %r25, 16, 0x1f, 0xffffffff;
+    mov.b32 %f5, %r26;
+    add.f32 %f1, %f1, %f5;
+    mov.b32 %r25, %f1;
+    shfl.sync.bfly.b32 %r26, %r25, 8, 0x1f, 0xffffffff;
+    mov.b32 %f5, %r26;
+    add.f32 %f1, %f1, %f5;
+    mov.b32 %r25, %f1;
+    shfl.sync.bfly.b32 %r26, %r25, 4, 0x1f, 0xffffffff;
+    mov.b32 %f5, %r26;
+    add.f32 %f1, %f1, %f5;
+    mov.b32 %r25, %f1;
+    shfl.sync.bfly.b32 %r26, %r25, 2, 0x1f, 0xffffffff;
+    mov.b32 %f5, %r26;
+    add.f32 %f1, %f1, %f5;
+    mov.b32 %r25, %f1;
+    shfl.sync.bfly.b32 %r26, %r25, 1, 0x1f, 0xffffffff;
+    mov.b32 %f5, %r26;
+    add.f32 %f1, %f1, %f5;
+    setp.eq.u32 %p2, %r10, 0;
+    @%p2 bra STORE_BATCH;
+    bra DONE_BATCH;
+
 STORE_BATCH:
-    mul.wide.u32 %rd11, %r7, 4;
-    add.s64 %rd12, %rd4, %rd11;
-    st.global.f32 [%rd12], %f1;
+    mul.wide.u32 %rd8, %r9, 4;
+    add.s64 %rd9, %rd4, %rd8;
+    st.global.f32 [%rd9], %f1;
 DONE_BATCH:
     ret;
 }
@@ -2026,114 +1956,6 @@ DONE_BATCH:
 .target sm_70
 .address_size 64
 
-.visible .entry sytra_bf16_matvec(
-    .param .u64 p_weights,
-    .param .u64 p_input,
-    .param .u64 p_output,
-    .param .u32 p_rows,
-    .param .u32 p_cols
-)
-{
-    .reg .pred %p<2>;
-    .reg .b16 %rs<2>;
-    .reg .b32 %r<16>;
-    .reg .b64 %rd<16>;
-    .reg .f32 %f<5>;
-
-    ld.param.u64 %rd1, [p_weights];
-    ld.param.u64 %rd2, [p_input];
-    ld.param.u64 %rd3, [p_output];
-    ld.param.u32 %r1, [p_rows];
-    ld.param.u32 %r2, [p_cols];
-    mov.u32 %r3, %ctaid.x;
-    mov.u32 %r4, %ntid.x;
-    mov.u32 %r5, %tid.x;
-    mad.lo.s32 %r6, %r3, %r4, %r5;
-    setp.ge.u32 %p1, %r6, %r1;
-    @%p1 bra DONE;
-    mov.f32 %f1, 0f00000000;
-    mov.u32 %r7, 0;
-
-LOOP:
-    setp.ge.u32 %p1, %r7, %r2;
-    @%p1 bra STORE;
-    mul.lo.u32 %r8, %r6, %r2;
-    add.u32 %r9, %r8, %r7;
-    mul.wide.u32 %rd4, %r9, 2;
-    add.s64 %rd5, %rd1, %rd4;
-    ld.global.u16 %rs1, [%rd5];
-    cvt.u32.u16 %r10, %rs1;
-    shl.b32 %r11, %r10, 16;
-    mov.b32 %f2, %r11;
-    mul.wide.u32 %rd6, %r7, 4;
-    add.s64 %rd7, %rd2, %rd6;
-    ld.global.f32 %f3, [%rd7];
-    fma.rn.f32 %f1, %f2, %f3, %f1;
-    add.u32 %r7, %r7, 1;
-    bra LOOP;
-
-STORE:
-    mul.wide.u32 %rd8, %r6, 4;
-    add.s64 %rd9, %rd3, %rd8;
-    st.global.f32 [%rd9], %f1;
-DONE:
-    ret;
-}
-
-.visible .entry sytra_bf16_transpose_matvec(
-    .param .u64 p_weights,
-    .param .u64 p_input,
-    .param .u64 p_output,
-    .param .u32 p_rows,
-    .param .u32 p_cols
-)
-{
-    .reg .pred %p<2>;
-    .reg .b16 %rs<2>;
-    .reg .b32 %r<16>;
-    .reg .b64 %rd<16>;
-    .reg .f32 %f<5>;
-
-    ld.param.u64 %rd1, [p_weights];
-    ld.param.u64 %rd2, [p_input];
-    ld.param.u64 %rd3, [p_output];
-    ld.param.u32 %r1, [p_rows];
-    ld.param.u32 %r2, [p_cols];
-    mov.u32 %r3, %ctaid.x;
-    mov.u32 %r4, %ntid.x;
-    mov.u32 %r5, %tid.x;
-    mad.lo.s32 %r6, %r3, %r4, %r5;
-    setp.ge.u32 %p1, %r6, %r2;
-    @%p1 bra T_DONE;
-    mov.f32 %f1, 0f00000000;
-    mov.u32 %r7, 0;
-
-T_LOOP:
-    setp.ge.u32 %p1, %r7, %r1;
-    @%p1 bra T_STORE;
-    mul.lo.u32 %r8, %r7, %r2;
-    add.u32 %r9, %r8, %r6;
-    mul.wide.u32 %rd4, %r9, 2;
-    add.s64 %rd5, %rd1, %rd4;
-    ld.global.u16 %rs1, [%rd5];
-    cvt.u32.u16 %r10, %rs1;
-    shl.b32 %r11, %r10, 16;
-    mov.b32 %f2, %r11;
-    mul.wide.u32 %rd6, %r7, 4;
-    add.s64 %rd7, %rd2, %rd6;
-    ld.global.f32 %f3, [%rd7];
-    fma.rn.f32 %f1, %f2, %f3, %f1;
-    add.u32 %r7, %r7, 1;
-    bra T_LOOP;
-
-T_STORE:
-    mul.wide.u32 %rd8, %r6, 4;
-    add.s64 %rd9, %rd3, %rd8;
-    st.global.f32 [%rd9], %f1;
-T_DONE:
-    ret;
-}
-
 .visible .entry sytra_bf16_matmul(
     .param .u64 p_weights,
     .param .u64 p_input,
@@ -2143,11 +1965,11 @@ T_DONE:
     .param .u32 p_positions
 )
 {
-    .reg .pred %p<2>;
+    .reg .pred %p<3>;
     .reg .b16 %rs<2>;
-    .reg .b32 %r<20>;
+    .reg .b32 %r<22>;
     .reg .b64 %rd<16>;
-    .reg .f32 %f<5>;
+    .reg .f32 %f<6>;
 
     ld.param.u64 %rd1, [p_weights];
     ld.param.u64 %rd2, [p_input];
@@ -2158,39 +1980,67 @@ T_DONE:
     mov.u32 %r4, %ctaid.x;
     mov.u32 %r5, %ntid.x;
     mov.u32 %r6, %tid.x;
-    mad.lo.s32 %r7, %r4, %r5, %r6;
-    mul.lo.u32 %r8, %r1, %r3;
-    setp.ge.u32 %p1, %r7, %r8;
+    mad.lo.u32 %r7, %r4, %r5, %r6;
+    shr.u32 %r8, %r7, 5;
+    and.b32 %r9, %r7, 31;
+    mul.lo.u32 %r10, %r1, %r3;
+    setp.ge.u32 %p1, %r8, %r10;
     @%p1 bra M_DONE;
-    div.u32 %r9, %r7, %r1;
-    rem.u32 %r10, %r7, %r1;
+    div.u32 %r11, %r8, %r1;
+    rem.u32 %r12, %r8, %r1;
+    mul.wide.u32 %rd4, %r12, %r2;
+    mul.wide.u32 %rd5, %r11, %r2;
     mov.f32 %f1, 0f00000000;
-    mov.u32 %r11, 0;
+    mov.u32 %r13, %r9;
 
 M_LOOP:
-    setp.ge.u32 %p1, %r11, %r2;
-    @%p1 bra M_STORE;
-    mul.lo.u32 %r12, %r10, %r2;
-    add.u32 %r13, %r12, %r11;
-    mul.wide.u32 %rd4, %r13, 2;
-    add.s64 %rd5, %rd1, %rd4;
-    ld.global.u16 %rs1, [%rd5];
+    setp.ge.u32 %p1, %r13, %r2;
+    @%p1 bra M_REDUCE;
+    cvt.u64.u32 %rd6, %r13;
+    add.u64 %rd7, %rd4, %rd6;
+    shl.b64 %rd7, %rd7, 1;
+    add.s64 %rd8, %rd1, %rd7;
+    ld.global.u16 %rs1, [%rd8];
     cvt.u32.u16 %r14, %rs1;
     shl.b32 %r15, %r14, 16;
     mov.b32 %f2, %r15;
-    mul.lo.u32 %r16, %r9, %r2;
-    add.u32 %r17, %r16, %r11;
-    mul.wide.u32 %rd6, %r17, 4;
-    add.s64 %rd7, %rd2, %rd6;
-    ld.global.f32 %f3, [%rd7];
+    add.u64 %rd9, %rd5, %rd6;
+    shl.b64 %rd9, %rd9, 2;
+    add.s64 %rd10, %rd2, %rd9;
+    ld.global.f32 %f3, [%rd10];
     fma.rn.f32 %f1, %f2, %f3, %f1;
-    add.u32 %r11, %r11, 1;
+    add.u32 %r13, %r13, 32;
     bra M_LOOP;
 
+M_REDUCE:
+    mov.b32 %r16, %f1;
+    shfl.sync.bfly.b32 %r17, %r16, 16, 0x1f, 0xffffffff;
+    mov.b32 %f4, %r17;
+    add.f32 %f1, %f1, %f4;
+    mov.b32 %r16, %f1;
+    shfl.sync.bfly.b32 %r17, %r16, 8, 0x1f, 0xffffffff;
+    mov.b32 %f4, %r17;
+    add.f32 %f1, %f1, %f4;
+    mov.b32 %r16, %f1;
+    shfl.sync.bfly.b32 %r17, %r16, 4, 0x1f, 0xffffffff;
+    mov.b32 %f4, %r17;
+    add.f32 %f1, %f1, %f4;
+    mov.b32 %r16, %f1;
+    shfl.sync.bfly.b32 %r17, %r16, 2, 0x1f, 0xffffffff;
+    mov.b32 %f4, %r17;
+    add.f32 %f1, %f1, %f4;
+    mov.b32 %r16, %f1;
+    shfl.sync.bfly.b32 %r17, %r16, 1, 0x1f, 0xffffffff;
+    mov.b32 %f4, %r17;
+    add.f32 %f1, %f1, %f4;
+    setp.eq.u32 %p2, %r9, 0;
+    @%p2 bra M_STORE;
+    bra M_DONE;
+
 M_STORE:
-    mul.wide.u32 %rd8, %r7, 4;
-    add.s64 %rd9, %rd3, %rd8;
-    st.global.f32 [%rd9], %f1;
+    mul.wide.u32 %rd11, %r8, 4;
+    add.s64 %rd12, %rd3, %rd11;
+    st.global.f32 [%rd12], %f1;
 M_DONE:
     ret;
 }
@@ -2266,50 +2116,12 @@ TM_DONE:
             if bytes.is_empty() {
                 return Err("cannot upload an empty expert".into());
             }
-            let size = u64::try_from(bytes.len())
-                .map_err(|_| "CUDA allocation size exceeds u64".to_string())?;
-            if !reserve_global_bytes(&self.live_bytes, &self.peak_bytes, size, self.memory_budget) {
-                self.budget_denials.fetch_add(1, Ordering::AcqRel);
-                return Err(format!(
-                    "CUDA allocation needs {size} bytes but the hard device limit is {}",
-                    self.memory_budget
-                ));
-            }
-            let mut pointer = 0;
-            let upload = (|| unsafe {
-                check((self.api.ctx_set_current)(self.context), "cuCtxSetCurrent")?;
-                check(
-                    (self.api.mem_alloc)(&mut pointer, bytes.len()),
-                    "cuMemAlloc",
-                )?;
-                if let Err(error) = check(
-                    (self.api.memcpy_htod)(pointer, bytes.as_ptr().cast::<c_void>(), bytes.len()),
-                    "cuMemcpyHtoD",
-                ) {
-                    let _ = (self.api.mem_free)(pointer);
-                    return Err(error);
-                }
-                Ok::<(), String>(())
-            })();
-            if let Err(error) = upload {
-                self.live_bytes.fetch_sub(size, Ordering::AcqRel);
+            let buffer = self.allocate_raw(bytes.len(), true)?;
+            if let Err(error) = self.write_buffer(&buffer, 0, bytes) {
+                self.release(&buffer);
                 return Err(error);
             }
-            let mut allocations = match self.allocations.lock() {
-                Ok(allocations) => allocations,
-                Err(_) => {
-                    unsafe {
-                        let _ = (self.api.mem_free)(pointer);
-                    }
-                    self.live_bytes.fetch_sub(size, Ordering::AcqRel);
-                    return Err("CUDA allocation registry is poisoned".into());
-                }
-            };
-            allocations.insert(pointer, size);
-            Ok(AcceleratorBuffer {
-                id: pointer,
-                bytes: bytes.len(),
-            })
+            Ok(buffer)
         }
 
         fn release(&self, buffer: &AcceleratorBuffer) {
@@ -2401,6 +2213,12 @@ mod platform {
             CudaMemoryMetrics::default()
         }
 
+        pub fn set_reclaimer(&self, _reclaimer: std::sync::Arc<dyn Fn() -> u64 + Send + Sync>) {}
+
+        pub fn reserve_scratch(&self, _bytes: usize) -> Result<(), String> {
+            Ok(())
+        }
+
         pub fn allocate(&self, _bytes: usize) -> Result<AcceleratorBuffer, String> {
             Err("CUDA allocation is unavailable on this platform build".into())
         }
@@ -2454,6 +2272,19 @@ mod platform {
             Err("CUDA INT4/BF16 kernel is unavailable on this platform build".into())
         }
 
+        pub fn int4_group_bf16_bytes_matmul(
+            &self,
+            _packed: &[u8],
+            _scales: &[u8],
+            _rows: usize,
+            _cols: usize,
+            _group_size: usize,
+            _positions: usize,
+            _input: &[f32],
+        ) -> Result<Vec<f32>, String> {
+            Err("CUDA INT4/BF16 batched kernel is unavailable on this platform build".into())
+        }
+
         pub fn int4_group32_bf16_bytes_matmul(
             &self,
             _packed: &[u8],
@@ -2476,6 +2307,24 @@ mod platform {
             _input: &[f32],
         ) -> Result<Vec<f32>, String> {
             Err("resident CUDA INT4/BF16 kernel is unavailable on this platform build".into())
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        pub fn resident_int4_group_bf16_matmul(
+            &self,
+            _resident: &AcceleratorBuffer,
+            _packed_offset: usize,
+            _scale_offset: usize,
+            _rows: usize,
+            _cols: usize,
+            _group_size: usize,
+            _positions: usize,
+            _input: &[f32],
+        ) -> Result<Vec<f32>, String> {
+            Err(
+                "resident CUDA INT4/BF16 batched kernel is unavailable on this platform build"
+                    .into(),
+            )
         }
 
         pub fn resident_int4_group32_bf16_matmul(

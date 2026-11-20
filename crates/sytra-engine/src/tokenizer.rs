@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use minijinja::{Environment, Error as TemplateError, ErrorKind, UndefinedBehavior};
+use minijinja::{Environment, Error as TemplateError, ErrorKind, UndefinedBehavior, Value as TemplateValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -67,7 +67,17 @@ impl ModelTokenizer {
         } else {
             Value::Object(Map::new())
         };
-        let chat_template = select_chat_template(config.get("chat_template"));
+        let mut chat_template = select_chat_template(config.get("chat_template"));
+        if chat_template.is_none() {
+            let jinja_path = root.join("chat_template.jinja");
+            if jinja_path.is_file() {
+                if let Ok(raw) = fs::read_to_string(&jinja_path) {
+                    if !raw.trim().is_empty() {
+                        chat_template = Some(raw);
+                    }
+                }
+            }
+        }
         let mut eos_token_ids = Vec::new();
         collect_token_strings(config.get("eos_token"), &mut |token| {
             if let Some(id) = tokenizer.token_to_id(token) {
@@ -153,7 +163,19 @@ impl ModelTokenizer {
             }
         }
         let mut environment = Environment::new();
-        environment.set_undefined_behavior(UndefinedBehavior::Strict);
+        environment.set_undefined_behavior(UndefinedBehavior::Lenient);
+        environment.set_unknown_method_callback(|_state, value, method, args| {
+            if let Some(s) = value.as_str() {
+                return python_str_method(s, method, args);
+            }
+            if let Some(res) = python_obj_method(&value, method, args) {
+                return res;
+            }
+            Err(TemplateError::new(
+                ErrorKind::UnknownMethod,
+                format!("{} has no method named {method}", value.kind()),
+            ))
+        });
         environment.add_function(
             "raise_exception",
             |message: String| -> Result<String, TemplateError> {
@@ -252,6 +274,203 @@ fn collect_token_ids(value: Option<&Value>, output: &mut Vec<u32>) {
     }
 }
 
+fn string_matches_arg(arg: &TemplateValue, predicate: impl Fn(&str) -> bool) -> Result<bool, TemplateError> {
+    if let Some(prefix) = arg.as_str() {
+        return Ok(predicate(prefix));
+    }
+    if let Ok(iter) = arg.try_iter() {
+        for item in iter {
+            let Some(s) = item.as_str() else {
+                return Err(TemplateError::new(
+                    ErrorKind::InvalidOperation,
+                    "expected string item in sequence argument",
+                ));
+            };
+            if predicate(s) {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    Err(TemplateError::new(
+        ErrorKind::InvalidOperation,
+        "expected string or sequence argument",
+    ))
+}
+
+fn strip_chars<'a>(s: &'a str, args: &[TemplateValue], left: bool, right: bool) -> Result<&'a str, TemplateError> {
+    if args.is_empty() || args[0].is_none() {
+        return Ok(match (left, right) {
+            (true, true) => s.trim(),
+            (true, false) => s.trim_start(),
+            (false, true) => s.trim_end(),
+            (false, false) => s,
+        });
+    }
+    let chars = args[0].as_str().ok_or_else(|| {
+        TemplateError::new(ErrorKind::InvalidOperation, "strip expects a string argument")
+    })?;
+    let pattern: Vec<char> = chars.chars().collect();
+    Ok(match (left, right) {
+        (true, true) => s.trim_matches(pattern.as_slice()),
+        (true, false) => s.trim_start_matches(pattern.as_slice()),
+        (false, true) => s.trim_end_matches(pattern.as_slice()),
+        (false, false) => s,
+    })
+}
+
+fn python_str_method(
+    s: &str,
+    method: &str,
+    args: &[TemplateValue],
+) -> Result<TemplateValue, TemplateError> {
+    match method {
+        "startswith" => {
+            let arg = args.first().ok_or_else(|| {
+                TemplateError::new(ErrorKind::MissingArgument, "startswith requires 1 argument")
+            })?;
+            Ok(TemplateValue::from(string_matches_arg(arg, |p| s.starts_with(p))?))
+        }
+        "endswith" => {
+            let arg = args.first().ok_or_else(|| {
+                TemplateError::new(ErrorKind::MissingArgument, "endswith requires 1 argument")
+            })?;
+            Ok(TemplateValue::from(string_matches_arg(arg, |p| s.ends_with(p))?))
+        }
+        "strip" => Ok(TemplateValue::from(strip_chars(s, args, true, true)?)),
+        "lstrip" => Ok(TemplateValue::from(strip_chars(s, args, true, false)?)),
+        "rstrip" => Ok(TemplateValue::from(strip_chars(s, args, false, true)?)),
+        "lower" => Ok(TemplateValue::from(s.to_lowercase())),
+        "upper" => Ok(TemplateValue::from(s.to_uppercase())),
+        "split" => {
+            let parts: Vec<TemplateValue> = if args.is_empty() || args[0].is_none() {
+                s.split_whitespace().map(TemplateValue::from).collect()
+            } else {
+                let sep = args[0].as_str().ok_or_else(|| {
+                    TemplateError::new(ErrorKind::InvalidOperation, "split sep must be string")
+                })?;
+                if let Some(max) = args.get(1).and_then(|v| v.as_i64()) {
+                    if max >= 0 {
+                        s.splitn(max as usize + 1, sep)
+                            .map(TemplateValue::from)
+                            .collect()
+                    } else {
+                        s.split(sep).map(TemplateValue::from).collect()
+                    }
+                } else {
+                    s.split(sep).map(TemplateValue::from).collect()
+                }
+            };
+            Ok(TemplateValue::from(parts))
+        }
+        "replace" => {
+            let old = args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TemplateError::new(ErrorKind::MissingArgument, "replace requires old"))?;
+            let new = args
+                .get(1)
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TemplateError::new(ErrorKind::MissingArgument, "replace requires new"))?;
+            let replaced = if let Some(count) = args.get(2).and_then(|v| v.as_i64()) {
+                if count >= 0 {
+                    s.replacen(old, new, count as usize)
+                } else {
+                    s.replace(old, new)
+                }
+            } else {
+                s.replace(old, new)
+            };
+            Ok(TemplateValue::from(replaced))
+        }
+        "find" => {
+            let sub = args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TemplateError::new(ErrorKind::MissingArgument, "find requires substring"))?;
+            let idx = s
+                .find(sub)
+                .map(|byte_idx| s[..byte_idx].chars().count() as i64)
+                .unwrap_or(-1);
+            Ok(TemplateValue::from(idx))
+        }
+        "count" => {
+            let sub = args
+                .first()
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TemplateError::new(ErrorKind::MissingArgument, "count requires substring"))?;
+            Ok(TemplateValue::from(s.matches(sub).count() as i64))
+        }
+        _ => Err(TemplateError::new(
+            ErrorKind::UnknownMethod,
+            format!("string has no method named {method}"),
+        )),
+    }
+}
+
+fn python_obj_method(
+    value: &TemplateValue,
+    method: &str,
+    args: &[TemplateValue],
+) -> Option<Result<TemplateValue, TemplateError>> {
+    use minijinja::value::ValueKind;
+    if value.kind() != ValueKind::Map {
+        return None;
+    }
+    match method {
+        "get" => {
+            let key = match args.first() {
+                Some(k) => k,
+                None => {
+                    return Some(Err(TemplateError::new(
+                        ErrorKind::MissingArgument,
+                        "get requires key",
+                    )))
+                }
+            };
+            let val = value
+                .get_item(key)
+                .ok()
+                .filter(|v| !v.is_undefined())
+                .unwrap_or_else(|| args.get(1).cloned().unwrap_or(TemplateValue::from(())));
+            Some(Ok(val))
+        }
+        "keys" => {
+            let keys: Vec<TemplateValue> = value
+                .try_iter()
+                .map(|iter| iter.collect())
+                .unwrap_or_default();
+            Some(Ok(TemplateValue::from(keys)))
+        }
+        "values" => {
+            let vals: Vec<TemplateValue> = value
+                .try_iter()
+                .map(|iter| {
+                    iter.filter_map(|k| value.get_item(&k).ok())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(Ok(TemplateValue::from(vals)))
+        }
+        "items" => {
+            let items: Vec<TemplateValue> = value
+                .try_iter()
+                .map(|iter| {
+                    iter.filter_map(|k| {
+                        value
+                            .get_item(&k)
+                            .ok()
+                            .map(|v| TemplateValue::from(vec![k, v]))
+                    })
+                    .collect()
+                })
+                .unwrap_or_default();
+            Some(Ok(TemplateValue::from(items)))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -301,6 +520,53 @@ mod tests {
             vec![1, 2, 3]
         );
         assert!(tokenizer.is_eos(4));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn qwen3_jinja_template_supports_python_string_methods_and_lenient_fields() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("sytra-tokenizer-qwen3-{nonce}"));
+        fs::create_dir_all(&root).unwrap();
+        let vocab_path = root.join("vocab.json");
+        fs::write(&vocab_path, br#"{"[UNK]":0,"hi":1}"#).unwrap();
+        let model = WordLevel::from_file(vocab_path.to_str().unwrap(), "[UNK]".into()).unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Some(Whitespace));
+        tokenizer.save(root.join("tokenizer.json"), false).unwrap();
+        let template = concat!(
+            "{%- set ns = namespace(last_query_index=messages|length - 1) %}",
+            "{%- for message in messages[::-1] %}",
+            "{%- if message.role == 'user' and not(message.content.startswith('<tool_response>') and message.content.endswith('</tool_response>')) %}",
+            "{%- set ns.last_query_index = loop.index0 %}",
+            "{%- endif %}",
+            "{%- endfor %}",
+            "{%- for m in messages %}",
+            "{{ m.role }}:{{ m.content.strip().split('|')[0] }}",
+            "{%- if m.tool_calls %}TOOLS{% endif %}",
+            "{%- endfor %}",
+            "{%- if add_generation_prompt %}->assistant{% endif %}",
+        );
+        fs::write(root.join("chat_template.jinja"), template).unwrap();
+        let tokenizer = ModelTokenizer::load(&root).unwrap();
+        let messages = vec![
+            ChatMessage {
+                role: "user".into(),
+                content: "  hi|there  ".into(),
+            },
+            ChatMessage {
+                role: "assistant".into(),
+                content: "<think>\nr1\n</think>\nanswer".into(),
+            },
+        ];
+        let rendered = tokenizer
+            .apply_chat_template(&messages, None, true)
+            .unwrap();
+        assert!(rendered.starts_with("user:hi"));
+        assert!(rendered.ends_with("->assistant"));
         fs::remove_dir_all(root).unwrap();
     }
 }

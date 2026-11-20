@@ -147,10 +147,8 @@ pub fn plan_memory_envelope_with_capabilities(
     let (host_expert_working, accelerator_expert_working) =
         expert_working_set(manifest, max_expert, verification_positions.max(1));
     let host_staging = host_expert_working.max(host_dense_working);
-    let accelerator_expert_kernel = matches!(
-        manifest.architecture.expert_format,
-        crate::WeightFormat::Bf16 | crate::WeightFormat::PackedInt4Group32
-    );
+    let accelerator_expert_kernel = manifest.architecture.expert_format == crate::WeightFormat::Bf16
+        || manifest.architecture.expert_format.is_packed_int4();
     let accelerator_expert_execution = accelerator_expert_kernel
         && max_expert > 0
         && accelerator_expert_working <= accelerator_usable;
@@ -323,6 +321,8 @@ fn dense_working_set(manifest: &RuntimeManifest, tile_budget: u64, positions: u6
         .iter()
         .map(|tensor| (tensor.tensor.as_str(), tensor))
         .collect();
+    let packed_group_size = u64::try_from(manifest.architecture.packed_group_size().unwrap_or(32))
+        .unwrap_or(32);
     let packed_peak = manifest
         .storage
         .dense_tensors
@@ -340,8 +340,8 @@ fn dense_working_set(manifest: &RuntimeManifest, tile_budget: u64, positions: u6
             let rows = packed.shape[0];
             let words_per_row = packed.shape[1];
             let cols = words_per_row.checked_mul(8)?;
-            let groups_per_row = cols / 32;
-            if !cols.is_multiple_of(32)
+            let groups_per_row = cols / packed_group_size;
+            if !cols.is_multiple_of(packed_group_size)
                 || scales.dtype.as_deref() != Some("BF16")
                 || scales.shape != [rows, groups_per_row]
             {

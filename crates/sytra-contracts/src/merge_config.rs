@@ -7,8 +7,11 @@ use uuid::Uuid;
 pub enum MergeMethod {
     Linear,
     Slerp,
+    MultiSlerp,
+    Nuslerp,
     Ties,
     DareTies,
+    DareLinear,
     TaskArithmetic,
     Passthrough,
     Moe,
@@ -18,7 +21,10 @@ impl MergeMethod {
     pub fn is_task_vector(&self) -> bool {
         matches!(
             self,
-            MergeMethod::Ties | MergeMethod::DareTies | MergeMethod::TaskArithmetic
+            MergeMethod::Ties
+                | MergeMethod::DareTies
+                | MergeMethod::DareLinear
+                | MergeMethod::TaskArithmetic
         )
     }
 
@@ -41,6 +47,27 @@ pub struct ModelEntry {
     /// Only present for `passthrough`.
     #[serde(default)]
     pub layer_range: Option<[u32; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_prompts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_prompts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoeExpert {
+    pub source_model: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub positive_prompts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub negative_prompts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MoeOptions {
+    pub architecture: String,
+    pub experts_per_token: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_experts: Vec<MoeExpert>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +116,8 @@ pub struct MergeConfig {
     pub base_model: Option<String>,
     pub dtype: String,
     pub models: Vec<ModelEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moe: Option<MoeOptions>,
     /// Method-global parameters forwarded verbatim to mergekit (e.g.
     /// slerp's `t`). Without this field the typed round-trip silently
     /// dropped them and slerp merges failed with "Missing required
@@ -98,6 +127,8 @@ pub struct MergeConfig {
     pub tokenizer: TokenizerConfig,
     pub compat: CompatConfig,
     pub output: MergeOutput,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub performance: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl MergeConfig {

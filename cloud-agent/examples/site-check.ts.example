@@ -1,0 +1,14 @@
+import { defineSchedule } from "eve/schedules";
+import { runBrowser } from "../lib/browser.ts";
+
+export default defineSchedule({
+  cron: "0 9 * * *",
+  timezone: "America/Sao_Paulo",
+  async run({ waitUntil }) {
+    const url = process.env.SYTRA_CLOUD_ROUTINE_URL;
+    if (!url) return;
+    waitUntil(runBrowser({ url, actions: [] }).then(result => {
+      console.log(JSON.stringify({ event: "site-check", url: result.url, title: result.title }));
+    }));
+  },
+});

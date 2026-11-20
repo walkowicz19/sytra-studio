@@ -1,13 +1,13 @@
-"""Verified, resumable Hugging Face model downloads.
-
-The Hub's Xet transport owns chunking, retries, resumption, and content
-validation. Sytra owns model-file selection, commit pinning, aggregate status,
-and a local manifest describing exactly what was downloaded.
-"""
+"""Verified, resumable Hugging Face model downloads."""
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from . import telemetry
+from .subprocess_utils import silent_subprocess_kwargs
 from .xet_safety import apply_xet_safety
 
 apply_xet_safety()
@@ -62,6 +63,69 @@ class RemoteFile:
     name: str
     size: int | None = None
     blob_id: str | None = None
+    sha256: str | None = None
+
+
+class _DownloadStalled(RuntimeError):
+    pass
+
+
+def _redact_secrets(text: str, extra_tokens: Iterable[str | None] = ()) -> str:
+    """Remove HF tokens, Bearer auth headers, and userinfo in proxy/origin URLs."""
+    redacted = str(text)
+    tokens = [t for t in extra_tokens if isinstance(t, str) and len(t) >= 4]
+    for env_key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+        val = os.environ.get(env_key)
+        if val and len(val) >= 4:
+            tokens.append(val)
+    for tok in sorted(set(tokens), key=len, reverse=True):
+        redacted = redacted.replace(tok, "***")
+    redacted = re.sub(r"hf_[A-Za-z0-9_]{6,}", "hf_***", redacted)
+    redacted = re.sub(r"Bearer\s+[A-Za-z0-9._\-]+", "Bearer ***", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"(https?://)([^/\s:@]+):([^/\s@]+)@", r"\1***:***@", redacted)
+    return redacted
+
+
+def _is_xet_transport_error(message: str) -> bool:
+    """True only when a CAS/Xet transport failure occurs (never auth/4xx errors)."""
+    lower = message.lower()
+    if any(auth in lower for auth in ("unauthorized", "401", "403", "404", "forbidden", "gated", "repository not found")):
+        return False
+    return any(tok in lower for tok in ("hf_xet", "cas_client", "cas.hf.co", "xet-core", "xet_get", "xet transport", "xet runtime"))
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest().lower()
+
+
+def _verify_existing_file(
+    path: Path,
+    item: RemoteFile,
+    prev_manifest: dict[str, Any] | None,
+    resolved_revision: str,
+) -> bool:
+    """Return True if an existing target shard is provably verified for this revision."""
+    try:
+        if not path.is_file():
+            return False
+        actual_size = path.stat().st_size
+        if item.size is not None and actual_size != item.size:
+            return False
+        if item.size is None and actual_size <= 0:
+            return False
+        if item.sha256:
+            return _sha256_file(path) == item.sha256.lower()
+        if isinstance(prev_manifest, dict) and prev_manifest.get("resolved_revision") == resolved_revision:
+            for entry in prev_manifest.get("files") or []:
+                if isinstance(entry, dict) and entry.get("path") == item.name:
+                    return True
+        return False
+    except OSError:
+        return False
 
 
 def _require_huggingface_hub():
@@ -81,6 +145,29 @@ def _format_eta(seconds: int) -> str:
     if seconds >= 60:
         return f"{seconds // 60}m {seconds % 60}s"
     return f"{seconds}s"
+
+
+def _partial_bytes(target_dir: Path) -> int:
+    """Count Hub local-dir partial transfers without loading data into memory."""
+    cache = target_dir / ".cache" / "huggingface" / "download"
+    total = 0
+    try:
+        for path in cache.rglob("*.incomplete"):
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass  # The Hub may rename a file while we inspect it.
+    except OSError:
+        pass
+    try:
+        for path in target_dir.rglob('*.sytra-download.part[0-7]'):
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total
 
 
 class _DownloadProgress:
@@ -148,13 +235,24 @@ class _DownloadProgress:
             completed_bytes += expected if expected is not None else (path.stat().st_size if path.exists() else 0)
 
         if include_incomplete and active:
+            range_bytes = 0
+            range_active = False
             for name in active:
                 path = self.target_dir / name
-                if path.exists():
+                staging = path.with_name(path.name + '.sytra-download')
+                if staging.with_name(staging.name + '.json').exists():
+                    range_active = True
+                    for index in range(8):
+                        try:
+                            range_bytes += staging.with_name(staging.name + f'.part{index}').stat().st_size
+                        except OSError:
+                            pass
+                elif path.exists():
                     try:
                         completed_bytes += path.stat().st_size
                     except OSError:
                         pass
+            completed_bytes += range_bytes if range_active else _partial_bytes(self.target_dir)
         return min(completed_bytes, self.total) if self.total else completed_bytes
 
     def _write(self, status: str, downloaded: int) -> None:
@@ -194,7 +292,7 @@ class _DownloadProgress:
             "shard_index": completed_count,
             "total_shards": len(self.files),
             "timestamp": time.time(),
-            "error": failed,
+            "error": _redact_secrets(failed) if failed else None,
         }
         try:
             temp = self.status_file.with_suffix(".json.tmp")
@@ -228,6 +326,7 @@ class FastHFDownloader:
         self.max_workers = 1
         self.repo_dir = self.cache_dir / "hub" / f"models--{repo_id.replace('/', '--')}"
         self._resolved_revision: str | None = None
+        self._file_metadata: dict[str, RemoteFile] = {}
 
         os.environ["HF_HOME"] = str(self.cache_dir.resolve())
         os.environ["HF_XET_CACHE"] = str((self.cache_dir / "xet").resolve())
@@ -328,6 +427,7 @@ class FastHFDownloader:
         for sibling in info.siblings or []:
             size = getattr(sibling, "size", None)
             lfs = getattr(sibling, "lfs", None)
+            sha256 = (lfs.get("sha256") if isinstance(lfs, dict) else getattr(lfs, "sha256", None)) if lfs else None
             if size is None and lfs:
                 size = lfs.get("size") if isinstance(lfs, dict) else getattr(lfs, "size", None)
             result.append(
@@ -335,9 +435,31 @@ class FastHFDownloader:
                     name=sibling.rfilename,
                     size=size,
                     blob_id=getattr(sibling, "blob_id", None),
+                    sha256=sha256,
                 )
             )
         return result
+
+    def _fallback_http(self, filename: str, revision: str) -> Path:
+        item = self._file_metadata.get(filename)
+        if item and item.size and item.sha256 and filename.lower().endswith((".safetensors", ".gguf")):
+            from huggingface_hub import get_token, hf_hub_url
+            from .http_ranges import download_ranges
+
+            destination = (self.repo_dir / filename).resolve()
+            if not destination.is_relative_to(self.repo_dir.resolve()):
+                raise ValueError("Model file path escapes the destination directory")
+            token = self.token
+            if token is None:
+                token = get_token()
+            return download_ranges(
+                hf_hub_url(self.repo_id, filename, revision=revision),
+                destination,
+                item.size,
+                item.sha256,
+                token if isinstance(token, str) else None,
+            )
+        return self._download_attempt(filename, revision, disable_xet=True)
 
     def download_file(
         self,
@@ -345,21 +467,64 @@ class FastHFDownloader:
         revision: str = "main",
         progress_cb: Callable[[int, int], None] | None = None,
     ) -> Path:
-        """Download one file atomically through huggingface_hub/hf-xet."""
-        _, hf_hub_download = _require_huggingface_hub()
-        path = hf_hub_download(
-            repo_id=self.repo_id,
-            filename=filename,
-            revision=revision,
-            local_dir=str(self.repo_dir),
-            token=self.token,
-        )
-        result = Path(path)
+        """Supervise Xet in a killable process, falling back to Hub HTTP on stalls or CAS/Xet transport errors."""
+        try:
+            result = self._download_attempt(filename, revision, disable_xet=False)
+        except _DownloadStalled:
+            telemetry.emit_event("download_xet_stalled", {"repo_id": self.repo_id, "file": filename})
+            result = self._fallback_http(filename, revision)
+        except RuntimeError as exc:
+            if not _is_xet_transport_error(str(exc)):
+                safe = _redact_secrets(
+                    str(exc),
+                    extra_tokens=[self.token if isinstance(self.token, str) else None],
+                )
+                if safe != str(exc):
+                    raise RuntimeError(safe) from None
+                raise
+            telemetry.emit_event("download_xet_fallback", {"repo_id": self.repo_id, "file": filename})
+            result = self._fallback_http(filename, revision)
         if not result.is_file() or result.stat().st_size <= 0:
             raise RuntimeError(f"Hub returned an invalid local file for {filename}")
         if progress_cb:
             progress_cb(result.stat().st_size, result.stat().st_size)
         return result
+
+    def _download_attempt(self, filename: str, revision: str, *, disable_xet: bool) -> Path:
+        env = os.environ.copy()
+        env["HF_HUB_DISABLE_XET"] = "1" if disable_xet else "0"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(Path(__file__).resolve().parents[1]), env.get("PYTHONPATH", ""))))
+        args = [sys.executable, "-m", "sytra_runner.hub_download_worker", self.repo_id,
+                filename, revision, str(self.repo_dir), "1" if self.tokenless else "0"]
+        with tempfile.TemporaryFile(mode="w+b") as output:
+            process = subprocess.Popen(args, stdout=output, stderr=output, env=env, **silent_subprocess_kwargs())
+            last_bytes = _partial_bytes(self.repo_dir)
+            last_progress = time.monotonic()
+            try:
+                while process.poll() is None:
+                    time.sleep(0.5)
+                    current = _partial_bytes(self.repo_dir)
+                    if current != last_bytes:
+                        last_bytes = current
+                        last_progress = time.monotonic()
+                    elif time.monotonic() - last_progress >= 15:
+                        raise _DownloadStalled(f"No download progress for 15 seconds: {filename}")
+                output.seek(0, os.SEEK_END)
+                output.seek(max(0, output.tell() - 16384))
+                message = _redact_secrets(
+                    output.read().decode("utf-8", errors="replace"),
+                    extra_tokens=[self.token if isinstance(self.token, str) else None],
+                )
+                if process.returncode:
+                    raise RuntimeError(f"Hub download failed for {filename}: {message[-4000:]}")
+                marker = next((line[13:] for line in reversed(message.splitlines()) if line.startswith("SYTRA_RESULT=")), None)
+                if not marker:
+                    raise RuntimeError(f"Hub download returned no file path for {filename}")
+                return Path(json.loads(marker))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
 
     def fetch_manifest(self, revision: str = "main") -> dict[str, Any]:
         """Fetch config plus the optional Safetensors index."""
@@ -383,8 +548,7 @@ class FastHFDownloader:
         """Download a caller-supplied complete shard set and fail on any error."""
         telemetry.emit_event(
             "fast_download_start",
-            {"repo_id": self.repo_id, "shard_count": len(shards)},
-            op_id=op_id,
+            {"repo_id": self.repo_id, "shard_count": len(shards), "op_id": op_id},
         )
         downloaded: list[Path] = []
         with ThreadPoolExecutor(max_workers=min(self.max_workers, len(shards) or 1)) as pool:
@@ -394,16 +558,15 @@ class FastHFDownloader:
                 try:
                     downloaded.append(future.result())
                 except Exception as exc:
-                    telemetry.emit_error(
-                        f"Failed shard download {shard}: {exc}",
-                        op="verified_download",
-                        op_id=op_id,
+                    safe_err = _redact_secrets(
+                        str(exc),
+                        extra_tokens=[self.token if isinstance(self.token, str) else None],
                     )
-                    raise RuntimeError(f"Failed shard download {shard}: {exc}") from exc
+                    telemetry.emit_error(f"Failed shard download {shard}: {safe_err}")
+                    raise RuntimeError(f"Failed shard download {shard}: {safe_err}") from exc
         telemetry.emit_event(
             "fast_download_complete",
-            {"repo_id": self.repo_id, "downloaded_count": len(downloaded)},
-            op_id=op_id,
+            {"repo_id": self.repo_id, "downloaded_count": len(downloaded), "op_id": op_id},
         )
         return downloaded
 
@@ -439,6 +602,10 @@ class FastHFDownloader:
             by_name = {item.name: item for item in remote}
             selected = [by_name[name] for name in selected_names]
         except Exception as exc:
+            safe_exc = _redact_secrets(
+                str(exc),
+                extra_tokens=[self.token if isinstance(self.token, str) else None],
+            )
             payload = {
                 "repo_id": self.repo_id,
                 "status": "error",
@@ -452,12 +619,21 @@ class FastHFDownloader:
                 "shard_index": 0,
                 "total_shards": 0,
                 "timestamp": time.time(),
-                "error": str(exc),
+                "error": safe_exc,
             }
-            status_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            raise RuntimeError(f"Model download preflight failed for {self.repo_id}: {exc}") from exc
+            temp_status = status_file.with_suffix(".json.tmp")
+            temp_status.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temp_status, status_file)
+            raise RuntimeError(f"Model download preflight failed for {self.repo_id}: {safe_exc}") from exc
+
+        manifest_path = target_dir / ".sytra-model.json"
+        try:
+            prev_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prev_manifest = None
 
         old_repo_dir = self.repo_dir
+        self._file_metadata = {item.name: item for item in selected}
         self.repo_dir = target_dir
         monitor = _DownloadProgress(self.repo_id, target_dir, selected, status_file, progress_cb)
         monitor.start()
@@ -465,19 +641,39 @@ class FastHFDownloader:
         errors: list[str] = []
 
         def fetch(item: RemoteFile) -> Path:
+            dest_path = (target_dir / item.name).resolve()
+            if not dest_path.is_relative_to(target_dir.resolve()):
+                raise ValueError(f"Model file path escapes the destination directory: {item.name}")
+            if _verify_existing_file(dest_path, item, prev_manifest, resolved_revision):
+                telemetry.emit_event("download_shard_skipped", {"repo_id": self.repo_id, "file": item.name})
+                monitor.mark_completed(item.name)
+                return dest_path
+
             monitor.mark_active(item.name)
+            path: Path | None = None
             try:
                 path = self.download_file(item.name, revision=resolved_revision)
-                if item.size is not None and path.stat().st_size != item.size:
+                actual_size = path.stat().st_size
+                if item.size is not None and actual_size != item.size:
+                    if path.is_file() and path.resolve().is_relative_to(target_dir.resolve()):
+                        path.unlink(missing_ok=True)
                     raise RuntimeError(
-                        f"size mismatch for {item.name}: expected {item.size}, got {path.stat().st_size}"
+                        f"size mismatch for {item.name}: expected {item.size}, got {actual_size}"
                     )
+                if item.sha256:
+                    if _sha256_file(path) != item.sha256.lower():
+                        if path.is_file() and path.resolve().is_relative_to(target_dir.resolve()):
+                            path.unlink(missing_ok=True)
+                        raise RuntimeError(f"SHA-256 mismatch for {item.name}")
                 monitor.mark_completed(item.name)
                 return path
             except Exception as exc:
-                message = f"{item.name}: {exc}"
-                monitor.mark_failed(message)
-                raise RuntimeError(message) from exc
+                safe_msg = _redact_secrets(
+                    f"{item.name}: {exc}",
+                    extra_tokens=[self.token if isinstance(self.token, str) else None],
+                )
+                monitor.mark_failed(safe_msg)
+                raise RuntimeError(safe_msg) from exc
 
         try:
             # Xet handles chunk parallelism; a small number of file workers is
@@ -505,21 +701,29 @@ class FastHFDownloader:
                         "path": item.name,
                         "size": item.size,
                         "blob_id": item.blob_id,
+                        "sha256": item.sha256,
                     }
                     for item in selected
                 ],
                 "total_bytes": sum(item.size or 0 for item in selected),
                 "completed_at": time.time(),
             }
-            (target_dir / ".sytra-model.json").write_text(
+            temp_manifest = manifest_path.with_suffix(".json.tmp")
+            temp_manifest.write_text(
                 json.dumps(manifest, indent=2),
                 encoding="utf-8",
             )
+            os.replace(temp_manifest, manifest_path)
             monitor.stop("completed")
             return sorted(downloaded)
         except Exception as exc:
-            monitor.mark_failed(str(exc))
+            safe_exc = _redact_secrets(
+                str(exc),
+                extra_tokens=[self.token if isinstance(self.token, str) else None],
+            )
+            monitor.mark_failed(safe_exc)
             monitor.stop("error")
-            raise RuntimeError(f"Verified download failed for {self.repo_id}: {exc}") from exc
+            raise RuntimeError(f"Verified download failed for {self.repo_id}: {safe_exc}") from exc
         finally:
             self.repo_dir = old_repo_dir
+            self._file_metadata = {}

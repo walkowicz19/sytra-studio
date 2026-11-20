@@ -10,13 +10,18 @@
 //! RunArchive, Guider, ResourceGuard, commands::start_op), so agent-driven
 //! runs land in the same archive and obey the same validation gates.
 
+#![recursion_limit = "256"]
+
 mod definitions;
 mod protocol;
 
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::net::{SocketAddr, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -28,9 +33,20 @@ use sytra_contracts::{
     OpStatus, TelemetryLine,
 };
 use sytra_host::{
-    commands, job_runner::JobRunner, materialize::materialize_dataset_for_config,
-    resource_guard::ResourceGuard, run_archive::RunArchive, BackendResolver, DownloadService,
-    EnvProvisioner, plan_inference, resolve_workspace,
+    chat_agents, chat_skills, commands, convert,
+    ensure_runner_deployed,
+    inference::plan_inference_with_options,
+    job_runner::JobRunner,
+    materialize::prepare_training_datasets,
+    mcp_install::{
+        install_mcp_clients, mcp_server_entry, status_report, uninstall_mcp_clients, McpClientKind,
+    },
+    model_settings, resolve_workspace,
+    resource_guard::ResourceGuard,
+    run_archive::RunArchive,
+    scan_local_models,
+    settings::{self, AppSettings, InferenceSettingsInput},
+    BackendResolver, ChatServer, DownloadService, EnvProvisioner, VoiceService,
 };
 
 use crate::definitions::tool_definitions;
@@ -42,6 +58,8 @@ struct Server {
     archive: RunArchive,
     guider: Guider,
     downloads: DownloadService,
+    chat: ChatServer,
+    voice: VoiceService,
     rt: tokio::runtime::Runtime,
     current_op: Mutex<Option<Uuid>>,
 }
@@ -62,6 +80,9 @@ impl Server {
 
     fn new() -> Self {
         let workspace = resolve_workspace();
+        if let Err(err) = ensure_runner_deployed(&workspace) {
+            eprintln!("failed to deploy embedded runner: {err}");
+        }
 
         let runs_dir = workspace.join("runs");
         std::fs::create_dir_all(&runs_dir).ok();
@@ -71,6 +92,8 @@ impl Server {
             archive: RunArchive::new(&runs_dir),
             guider: Guider::new(),
             downloads: DownloadService::new(&workspace),
+            chat: ChatServer::new(&workspace),
+            voice: VoiceService::new(&workspace),
             rt: tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -135,7 +158,7 @@ impl Server {
     // ── Tools ────────────────────────────────────────────────────────────
 
     fn tool_get_status(&self) -> Result<Value, String> {
-        let current = *self.current_op.lock().unwrap();
+        let current = *self.current_op.lock().unwrap_or_else(|p| p.into_inner());
         let envs = EnvProvisioner::new(&self.workspace).status_report();
         Ok(json!({
             "running": self.runner.is_running(),
@@ -220,17 +243,21 @@ impl Server {
         let record = self.archive.load(op_id).map_err(|e| e.to_string())?;
         let transcript_path = self.transcripts_dir().join(format!("{op_id}.jsonl"));
         let tail_lines = sytra_host::transcript::tail_jsonl(&transcript_path, tail);
+        let provenance = std::fs::read_to_string(record.artifact_path.join("sytra-provenance.json"))
+            .ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
         Ok(json!({
             "op_id": record.op_id.to_string(),
             "kind": record.kind,
             "status": record.status,
             "artifact_path": record.artifact_path.display().to_string(),
             "telemetry_tail": tail_lines,
+            "provenance": provenance,
         }))
     }
 
     fn tool_start_train(&self, args: &Value) -> Result<Value, String> {
-        let user_config = args.get("config").cloned().ok_or("missing 'config'")?;
+        let mut user_config = args.get("config").cloned().ok_or("missing 'config'")?;
+        sytra_host::training_source::normalize_aliases(&mut user_config)?;
 
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -252,18 +279,20 @@ impl Server {
             },
             "train": {
                 "max_steps": 200, "epochs": null, "batch_size": 2,
-                "max_seq_len": 2048, "save_every": 50, "packing": false
+                "max_seq_len": 2048, "save_every": 50, "packing": "auto"
             },
             "algo": {},
             "output": {
                 "adapter_path": format!("runs/mcp/adapter-{stamp}"),
-                "resume_from": null
+                "resume_from_checkpoint": null
             }
         });
         deep_merge(&mut merged, &user_config);
 
         let mut run_config: RunConfig =
             serde_json::from_value(merged).map_err(|e| format!("invalid train config: {e}"))?;
+
+        sytra_host::training_source::resolve(&mut run_config)?;
 
         // Materialize the dataset exactly like the GUI does.
         let dataset_dir = self
@@ -272,11 +301,7 @@ impl Server {
             .join("mcp")
             .join(format!("dataset-{stamp}"));
         std::fs::create_dir_all(&dataset_dir).map_err(|e| e.to_string())?;
-        self.rt.block_on(materialize_dataset_for_config(
-            &mut run_config.data,
-            run_config.train_mode,
-            &dataset_dir,
-        ))?;
+        self.rt.block_on(prepare_training_datasets(&mut run_config, &dataset_dir))?;
 
         let config_val = serde_json::to_value(&run_config).map_err(|e| e.to_string())?;
         let config_path = self.write_op_yaml("run", &config_val)?;
@@ -289,7 +314,7 @@ impl Server {
         let (op_id, rx) =
             commands::start_op(op, &self.runner, &self.archive, &guard, &self.guider)?;
         self.spawn_drain(op_id, rx);
-        *self.current_op.lock().unwrap() = Some(op_id);
+        *self.current_op.lock().unwrap_or_else(|p| p.into_inner()) = Some(op_id);
 
         Ok(json!({
             "op_id": op_id.to_string(),
@@ -354,7 +379,7 @@ impl Server {
         let (op_id, rx) =
             commands::start_op(op, &self.runner, &self.archive, &guard, &self.guider)?;
         self.spawn_drain(op_id, rx);
-        *self.current_op.lock().unwrap() = Some(op_id);
+        *self.current_op.lock().unwrap_or_else(|p| p.into_inner()) = Some(op_id);
 
         Ok(json!({
             "op_id": op_id.to_string(),
@@ -370,7 +395,7 @@ impl Server {
             Err(_) => self
                 .current_op
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|p| p.into_inner())
                 .ok_or("no op_id given and no operation was started by this server")?,
         };
         commands::stop_op(op_id, &self.runner, &self.archive)?;
@@ -421,18 +446,11 @@ impl Server {
     }
 
     fn tool_get_settings(&self) -> Result<Value, String> {
-        let settings = sytra_host::settings::AppSettings::load(&self.workspace);
+        let current = AppSettings::load(&self.workspace);
         let detected_ram_mb = BackendResolver::detect_system_ram_mb().ok_or_else(|| {
             "Could not detect system RAM".to_string()
         })?;
-        Ok(json!({
-            "hf_cache_dir": settings.effective_hf_cache(&self.workspace).display().to_string(),
-            "is_custom": settings.hf_cache_dir.is_some(),
-            "main_memory_limit_mb": settings.main_memory_limit_mb,
-            "effective_main_memory_mb": settings.effective_main_memory_mb(detected_ram_mb),
-            "detected_ram_mb": detected_ram_mb,
-            "memory_limit_note": "main_memory_limit_mb gates preflight estimates only; it does not cap process RSS. Prefer one shared MCP config and launch sytra-mcp directly instead of npx.",
-        }))
+        Ok(settings::settings_payload(&current, &self.workspace, detected_ram_mb))
     }
 
     fn tool_set_cache_dir(&self, args: &Value) -> Result<Value, String> {
@@ -500,7 +518,9 @@ impl Server {
         let envs = EnvProvisioner::new(ws);
         let merge_py = envs.merge_python_path();
         let train_py = envs.train_python_path();
-        let ollama_ok = std::process::Command::new("ollama")
+        let mut ollama_cmd = std::process::Command::new("ollama");
+        sytra_host::apply_hidden_window(&mut ollama_cmd);
+        let ollama_ok = ollama_cmd
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -639,27 +659,174 @@ impl Server {
     }
 
     fn tool_plan_inference(&self, args: &Value) -> Result<Value, String> {
-        let model_path = args
-            .get("model_path")
-            .and_then(|v| v.as_str())
-            .ok_or("missing 'model_path'")?;
+        let model_path = req_str(args, "model_path")?;
         let context = args.get("context").and_then(|v| v.as_u64()).map(|v| v as usize);
         let export = args
             .get("export_runtimes")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let allow_unverified = args.get("allow_unverified").and_then(|v| v.as_bool());
         let guard = self.operation_guard()?;
         if guard.total_vram_mb == 0 || guard.total_ram_mb == 0 {
             return Err("Hardware memory could not be detected; refusing to plan inference".into());
         }
-        plan_inference(
+        plan_inference_with_options(
             &self.workspace,
             model_path,
             guard.total_vram_mb,
             Some(guard.total_ram_mb),
             context,
             export,
+            allow_unverified,
         )
+    }
+
+    fn tool_list_local_models(&self, args: &Value) -> Result<Value, String> {
+        let custom_dir = args.get("custom_dir").and_then(|v| v.as_str());
+        let models = scan_local_models(&self.workspace, custom_dir);
+        Ok(json!({ "count": models.len(), "models": models }))
+    }
+
+    fn tool_get_download_status(&self, args: &Value) -> Result<Value, String> {
+        let dest_dir = args.get("dest_dir").and_then(|v| v.as_str());
+        match DownloadService::read_status(dest_dir) {
+            Some(status) => serde_json::to_value(status).map_err(|e| e.to_string()),
+            None => Ok(json!({ "active": false })),
+        }
+    }
+
+    fn tool_cancel_download(&self, args: &Value) -> Result<Value, String> {
+        let dest_dir = args.get("dest_dir").and_then(|v| v.as_str());
+        self.downloads.cancel(dest_dir)?;
+        Ok(json!({ "cancelled": true }))
+    }
+
+    fn tool_build_moe_index(&self, args: &Value) -> Result<Value, String> {
+        let model_path = req_str(args, "model_path")?;
+        let adapter = args.get("adapter").and_then(|v| v.as_str()).unwrap_or("auto");
+        let expert_format = args
+            .get("expert_format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
+        let expert_regex = args.get("expert_regex").and_then(|v| v.as_str());
+        convert::build_moe_index(
+            &self.workspace,
+            model_path,
+            adapter,
+            expert_format,
+            expert_regex,
+        )
+    }
+
+    fn tool_generate_moe_oracle(&self, args: &Value) -> Result<Value, String> {
+        let model_path = req_str(args, "model_path")?;
+        let trust_remote_code = args
+            .get("trust_remote_code")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let device_map = args.get("device_map").and_then(|v| v.as_str());
+        convert::generate_moe_oracle(&self.workspace, model_path, trust_remote_code, device_map)
+    }
+
+    fn tool_set_inference_settings(&self, args: &Value) -> Result<Value, String> {
+        let detected_ram_mb = BackendResolver::detect_system_ram_mb()
+            .ok_or_else(|| "Could not detect system RAM".to_string())?;
+        let input: InferenceSettingsInput =
+            serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
+        settings::apply_inference_settings(&self.workspace, detected_ram_mb, input)
+    }
+
+    fn tool_get_model_settings(&self, args: &Value) -> Result<Value, String> {
+        let model_path = req_str(args, "model_path")?;
+        let loaded = model_settings::load(&self.workspace, Path::new(model_path))?;
+        serde_json::to_value(loaded).map_err(|e| e.to_string())
+    }
+
+    fn tool_set_model_settings(&self, args: &Value) -> Result<Value, String> {
+        let model_path = req_str(args, "model_path")?;
+        let path = Path::new(model_path);
+        let mut current = model_settings::load(&self.workspace, path)?;
+        opt_patch(args, "context_length", &mut current.context_length)?;
+        opt_patch(args, "temperature", &mut current.temperature)?;
+        opt_patch(args, "vram_limit_mb", &mut current.vram_limit_mb)?;
+        opt_patch(args, "vram_guardrail_mb", &mut current.vram_guardrail_mb)?;
+        opt_patch(args, "kv_cache_quant", &mut current.kv_cache_quant)?;
+        opt_patch(args, "cpu_kv_cache", &mut current.cpu_kv_cache)?;
+        opt_patch(args, "flash_attention", &mut current.flash_attention)?;
+        opt_patch(args, "idle_ttl_minutes", &mut current.idle_ttl_minutes)?;
+        opt_patch(args, "draft_model_path", &mut current.draft_model_path)?;
+        opt_patch(args, "allow_unverified", &mut current.allow_unverified)?;
+        model_settings::save(&self.workspace, path, &current)?;
+        serde_json::to_value(current).map_err(|e| e.to_string())
+    }
+
+    fn tool_start_server(&self, args: &Value) -> Result<Value, String> {
+        let model_path = req_str(args, "model_path")?;
+        let context = args.get("context").and_then(|v| v.as_u64()).map(|v| v as usize);
+        let vram_limit = args
+            .get("vram_limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        let cpu_kv_cache = args.get("cpu_kv_cache").and_then(|v| v.as_bool());
+        let allow_unverified = args.get("allow_unverified").and_then(|v| v.as_bool());
+        self.chat
+            .start_with_options(model_path, context, vram_limit, cpu_kv_cache, allow_unverified)?;
+        Ok(json!({
+            "running": true,
+            "model_path": model_path,
+            "endpoint": "http://127.0.0.1:8080/v1",
+            "health_url": "http://127.0.0.1:8080/health",
+        }))
+    }
+
+    fn tool_stop_server(&self) -> Result<Value, String> {
+        self.chat.stop()?;
+        Ok(json!({ "running": false }))
+    }
+
+    fn tool_server_status(&self) -> Result<Value, String> {
+        let addr: SocketAddr = "127.0.0.1:8080".parse().expect("valid loopback addr");
+        let port_listening = TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok();
+        Ok(json!({
+            "running": self.chat.is_running(),
+            "port_listening": port_listening,
+            "endpoint": "http://127.0.0.1:8080/v1",
+            "health_url": "http://127.0.0.1:8080/health",
+        }))
+    }
+
+    fn tool_convert_model(&self, args: &Value) -> Result<Value, String> {
+        let model = req_str(args, "model")?;
+        let outtype = args.get("outtype").and_then(|v| v.as_str());
+        let outfile = args.get("outfile").and_then(|v| v.as_str());
+        let op_id = convert::convert_model(&self.workspace, model, outtype, outfile)?;
+        Ok(json!({ "op_id": op_id, "status": "completed" }))
+    }
+
+    fn tool_export_model(&self, args: &Value) -> Result<Value, String> {
+        let model = req_str(args, "model")?;
+        let name = args.get("name").and_then(|v| v.as_str());
+        let context = args
+            .get("context")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or_else(|| AppSettings::load(&self.workspace).default_context_window);
+        let op_id = convert::export_model(&self.workspace, model, name, context)?;
+        Ok(json!({ "op_id": op_id, "status": "completed", "context": context }))
+    }
+
+    fn tool_list_chat_skills(&self) -> Result<Value, String> {
+        let skills = chat_skills::list(&self.workspace);
+        Ok(json!({ "count": skills.len(), "skills": skills }))
+    }
+
+    fn tool_list_chat_agents(&self) -> Result<Value, String> {
+        let agents = chat_agents::list_agents(&self.workspace)?;
+        Ok(json!({ "count": agents.len(), "agents": agents }))
+    }
+
+    fn tool_get_voice_status(&self) -> Result<Value, String> {
+        serde_json::to_value(self.voice.status()).map_err(|e| e.to_string())
     }
 
     fn call_tool(&self, name: &str, args: &Value) -> Result<Value, String> {
@@ -679,11 +846,46 @@ impl Server {
             "start_merge" => self.tool_start_merge(args),
             "stop_op" => self.tool_stop_op(args),
             "preview_dataset" => self.tool_preview_dataset(args),
+            "sytra_dataset_merge" => sytra_host::dataset_fabric::run(&self.workspace, "merge", args),
+            "sytra_dataset_split" => sytra_host::dataset_fabric::run(&self.workspace, "split", args),
             "export_guide" => self.tool_export_guide(args),
             "plan_inference" => self.tool_plan_inference(args),
+            "list_local_models" => self.tool_list_local_models(args),
+            "get_download_status" => self.tool_get_download_status(args),
+            "cancel_download" => self.tool_cancel_download(args),
+            "build_moe_index" => self.tool_build_moe_index(args),
+            "generate_moe_oracle" => self.tool_generate_moe_oracle(args),
+            "set_inference_settings" => self.tool_set_inference_settings(args),
+            "get_model_settings" => self.tool_get_model_settings(args),
+            "set_model_settings" => self.tool_set_model_settings(args),
+            "start_server" => self.tool_start_server(args),
+            "stop_server" => self.tool_stop_server(),
+            "server_status" => self.tool_server_status(),
+            "convert_model" => self.tool_convert_model(args),
+            "export_model" => self.tool_export_model(args),
+            "list_chat_skills" => self.tool_list_chat_skills(),
+            "list_chat_agents" => self.tool_list_chat_agents(),
+            "get_voice_status" => self.tool_get_voice_status(),
             other => Err(format!("unknown tool: {other}")),
         }
     }
+}
+
+fn req_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing '{key}'"))
+}
+
+fn opt_patch<T: DeserializeOwned>(
+    args: &Value,
+    key: &str,
+    slot: &mut Option<T>,
+) -> Result<(), String> {
+    if let Some(val) = args.get(key) {
+        *slot = serde_json::from_value(val.clone()).map_err(|e| format!("invalid '{key}': {e}"))?;
+    }
+    Ok(())
 }
 
 fn parse_op_id(args: &Value) -> Result<Uuid, String> {
@@ -711,7 +913,238 @@ fn deep_merge(base: &mut Value, patch: &Value) {
     }
 }
 
+fn print_cli_help() {
+    println!(
+        "Sytra Studio MCP Server ({version})\n\n\
+Usage:\n  \
+  sytra-mcp                 Run MCP stdio JSON-RPC server (default)\n  \
+  sytra-mcp install         Configure detected MCP clients to launch sytra-mcp directly\n  \
+  sytra-mcp uninstall       Remove sytra-studio from MCP client configs\n  \
+  sytra-mcp status          Show binary, workspace, runner, and client config status\n  \
+  sytra-mcp print-config    Print MCP configuration without NPM/npx\n  \
+  sytra-mcp --version       Print version\n  \
+  sytra-mcp --help          Show this help\n\n\
+Install / Print options:\n  \
+  --client <list>           auto (default), all, project, claude-desktop, claude-code, cursor, codex, vscode, antigravity\n  \
+  --workspace <dir>         Override SYTRA_WORKSPACE path\n  \
+  --binary <path>           Override sytra-mcp executable path recorded in client config\n  \
+  --dry-run                 Show actions without modifying config files\n  \
+  --json                    Emit machine-readable JSON output",
+        version = env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn parse_flag_value(args: &[String], idx: &mut usize, flag: &str) -> Result<String, String> {
+    if let Some(rest) = args[*idx].strip_prefix(&format!("{flag}=")) {
+        return Ok(rest.to_string());
+    }
+    *idx += 1;
+    args.get(*idx)
+        .cloned()
+        .ok_or_else(|| format!("Missing value for {flag}"))
+}
+
+fn run_cli(args: &[String]) -> Result<i32, String> {
+    let cmd = args[0].as_str();
+    match cmd {
+        "-h" | "--help" | "help" => {
+            print_cli_help();
+            return Ok(0);
+        }
+        "-V" | "--version" | "version" => {
+            println!("sytra-mcp {}", env!("CARGO_PKG_VERSION"));
+            return Ok(0);
+        }
+        "status" | "print-config" | "install" | "uninstall" => {}
+        other => {
+            return Err(format!(
+                "Unknown argument '{other}'. Run 'sytra-mcp --help' for usage."
+            ));
+        }
+    }
+
+    let mut clients: Vec<String> = Vec::new();
+    let mut workspace_override: Option<PathBuf> = None;
+    let mut binary_override: Option<PathBuf> = None;
+    let mut dry_run = false;
+    let mut json_out = false;
+
+    let mut idx = 1;
+    while idx < args.len() {
+        let arg = args[idx].as_str();
+        if arg == "--dry-run" {
+            dry_run = true;
+        } else if arg == "--json" {
+            json_out = true;
+        } else if arg == "--client" || arg.starts_with("--client=") {
+            clients.push(parse_flag_value(args, &mut idx, "--client")?);
+        } else if arg == "--workspace" || arg.starts_with("--workspace=") {
+            workspace_override = Some(PathBuf::from(parse_flag_value(
+                args,
+                &mut idx,
+                "--workspace",
+            )?));
+        } else if arg == "--binary" || arg.starts_with("--binary=") {
+            binary_override = Some(PathBuf::from(parse_flag_value(args, &mut idx, "--binary")?));
+        } else if arg == "-h" || arg == "--help" {
+            print_cli_help();
+            return Ok(0);
+        } else {
+            return Err(format!("Unknown flag '{arg}'"));
+        }
+        idx += 1;
+    }
+
+    let workspace = workspace_override.unwrap_or_else(resolve_workspace);
+    if matches!(cmd, "status" | "install") && !dry_run {
+        if let Err(err) = ensure_runner_deployed(&workspace) {
+            eprintln!("warning: failed to deploy embedded runner: {err}");
+        }
+    }
+
+    match cmd {
+        "status" => {
+            let report = status_report(&workspace, binary_override.as_deref());
+            if json_out {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+                );
+            } else {
+                println!(
+                    "sytra-mcp binary : {} ({})",
+                    report.mcp_binary_path,
+                    if report.mcp_binary_exists {
+                        "found"
+                    } else {
+                        "missing"
+                    }
+                );
+                println!("workspace        : {}", report.workspace);
+                println!(
+                    "python runner    : {}",
+                    if report.runner_ready {
+                        "ready"
+                    } else {
+                        "not deployed"
+                    }
+                );
+                println!("\nMCP Clients:");
+                for c in &report.clients {
+                    let state = if c.configured {
+                        "configured"
+                    } else if c.detected {
+                        "detected"
+                    } else {
+                        "not detected"
+                    };
+                    println!("  - {:<15} [{:<12}] {}", c.label, state, c.config_path);
+                }
+            }
+            Ok(0)
+        }
+        "print-config" => {
+            let report = status_report(&workspace, binary_override.as_deref());
+            let target = clients.first().map(|s| s.as_str()).unwrap_or("generic");
+            match target.to_ascii_lowercase().as_str() {
+                "codex" => println!("{}", report.codex_toml),
+                "vscode" | "vs-code" | "code" => println!("{}", report.vscode_json),
+                "generic" | "auto" | "claude" | "claude-desktop" | "claude-code" | "cursor"
+                | "antigravity" => {
+                    println!("{}", report.generic_json);
+                }
+                "project" => {
+                    let bin = PathBuf::from(&report.mcp_binary_path);
+                    let entry = mcp_server_entry(&bin, &workspace, false);
+                    let doc = json!({ "mcpServers": { "sytra-studio": entry } });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?
+                    );
+                }
+                other => {
+                    let kind = McpClientKind::parse(other).map_err(|e| e.to_string())?;
+                    if kind == McpClientKind::Codex {
+                        println!("{}", report.codex_toml);
+                    } else if kind == McpClientKind::VsCode {
+                        println!("{}", report.vscode_json);
+                    } else {
+                        println!("{}", report.generic_json);
+                    }
+                }
+            }
+            Ok(0)
+        }
+        "install" => {
+            let sel = if clients.is_empty() {
+                None
+            } else {
+                Some(clients.as_slice())
+            };
+            let outcomes =
+                install_mcp_clients(&workspace, sel, binary_override.as_deref(), dry_run)
+                    .map_err(|e| e.to_string())?;
+            if json_out {
+                let report = status_report(&workspace, binary_override.as_deref());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "outcomes": outcomes,
+                        "status": report,
+                    }))
+                    .map_err(|e| e.to_string())?
+                );
+            } else if outcomes.is_empty() {
+                let report = status_report(&workspace, binary_override.as_deref());
+                println!(
+                    "No existing MCP client directories were auto-detected. Use `--client all` or `--client claude-desktop,cursor,codex,claude-code,vscode,antigravity` to create configs explicitly.\n\nDirect MCP config (no NPM required):\n{}",
+                    report.generic_json
+                );
+            } else {
+                for item in &outcomes {
+                    println!("[{}] {} -> {}", item.action, item.label, item.config_path);
+                }
+            }
+            Ok(0)
+        }
+        "uninstall" => {
+            let sel = if clients.is_empty() {
+                None
+            } else {
+                Some(clients.as_slice())
+            };
+            let outcomes =
+                uninstall_mcp_clients(&workspace, sel, dry_run).map_err(|e| e.to_string())?;
+            if json_out {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({ "outcomes": outcomes }))
+                        .map_err(|e| e.to_string())?
+                );
+            } else if outcomes.is_empty() {
+                println!("No matching sytra-studio MCP entries found.");
+            } else {
+                for item in &outcomes {
+                    println!("[{}] {} -> {}", item.action, item.label, item.config_path);
+                }
+            }
+            Ok(0)
+        }
+        _ => unreachable!(),
+    }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.is_empty() {
+        match run_cli(&args) {
+            Ok(code) => std::process::exit(code),
+            Err(err) => {
+                eprintln!("Error: {err}");
+                std::process::exit(2);
+            }
+        }
+    }
     let server = Server::new();
     let stdin = std::io::stdin();
 
@@ -742,7 +1175,7 @@ fn main() {
                         "protocolVersion": client_version,
                         "capabilities": { "tools": {} },
                         "serverInfo": { "name": "sytra-studio", "version": env!("CARGO_PKG_VERSION") },
-                        "instructions": "Sytra Studio: local LLM fine-tuning and merging. Typical flow — (1) get_status for hardware, (2) list_catalog or guider_recommend to pick a model, (3) start_train or merge_check + start_merge, (4) poll get_run with the returned op_id until status is done/error, (5) stop_op to cancel. One operation at a time; artifacts land under the workspace runs/ directory."
+                        "instructions": "Sytra Studio: local LLM fine-tuning, merging, and Sytra-Helix/GGUF inference. Typical flows — Training/Merging: get_status -> list_catalog/guider_recommend -> start_train or merge_check + start_merge -> poll get_run -> stop_op. Inference: list_local_models -> (build_moe_index + generate_moe_oracle for SafeTensors MoE) -> plan_inference -> start_server -> server_status / stop_server."
                     }),
                 );
             }
@@ -786,11 +1219,12 @@ fn main() {
     // merge subprocess must not outlive its operator: stop it and let
     // stop_op record the Stopped status. (stop is idempotent, so this is
     // a no-op when the operation already finished.)
-    let orphan = *server.current_op.lock().unwrap();
+    let orphan = *server.current_op.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(op_id) = orphan {
         if let Err(err) = commands::stop_op(op_id, &server.runner, &server.archive) {
             eprintln!("failed to stop orphaned op: {err}");
         }
     }
     server.downloads.shutdown();
+    server.chat.shutdown();
 }

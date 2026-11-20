@@ -15,6 +15,7 @@ from pathlib import Path
 from .gguf_meta import GgufMetadata, try_read_gguf_metadata
 from .model_planner import ModelCompatibilityError, inspect_model
 from .runtime_detect import find_lm_studio, find_ollama
+from .subprocess_utils import silent_subprocess_kwargs
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ def _runtime_version(executable: str, *args: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=8,
+            **silent_subprocess_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -72,15 +74,18 @@ def _modelfile_text(
     context: int,
     metadata: GgufMetadata | None,
 ) -> str:
-    lines = [f"FROM {model_path.resolve().as_posix()}", f"PARAMETER num_ctx {context}"]
+    safe_model_path = model_path.resolve().as_posix().replace("\r", "").replace("\n", "")
+    lines = [f"FROM {safe_model_path}", f"PARAMETER num_ctx {int(context)}"]
     if metadata and metadata.chat_template:
-        escaped = metadata.chat_template.replace("'''", "’''")
-        lines.append(f"TEMPLATE '''{escaped}'''")
+        clean_template = metadata.chat_template.replace('"""', r'\"\"\"')
+        lines.append(f'TEMPLATE """{clean_template}"""')
     stops = list(metadata.stop_tokens) if metadata else []
     if not stops:
         stops = ["<|im_end|>", "<|endoftext|>"]
     for stop in stops:
-        lines.append(f'PARAMETER stop "{stop}"')
+        sanitized_stop = stop.replace("\r", "").replace("\n", "").replace('"', r'\"')
+        if sanitized_stop:
+            lines.append(f'PARAMETER stop "{sanitized_stop}"')
     return "\n".join(lines) + "\n"
 
 

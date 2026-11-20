@@ -6,11 +6,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    apply_standard_rope, bf16_tile_matmul_cpu, decode_float_values, rms_norm, route_topk_logits,
-    standard_attention_decode_window, standard_gated_expert_batch_resident, ActivationKind,
-    CudaAccelerator, DenseTensorStore, KimiSpeculativeOutput, KimiStepMetrics, ModelFamily, Route,
-    RouterSemantics, RoutingBatch, RuntimeManifest, StandardKvEntry, StandardMoeKvState,
-    StreamingScheduler, TiledMatmulOutput, WeightFormat,
+    apply_standard_rope, bf16_tile_matmul_cpu, decode_float_values, manifest::validate_packed_shape_segment,
+    rms_norm, route_topk_logits, standard_attention_decode_window,
+    standard_gated_expert_batch_resident_with_group, ActivationKind, CudaAccelerator,
+    DenseTensorStore, KimiSpeculativeOutput, KimiStepMetrics, ModelFamily, Route, RouterSemantics,
+    RoutingBatch, RuntimeManifest, StandardKvEntry, StandardMoeKvState, StreamingScheduler,
+    TiledMatmulOutput, WeightFormat,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,8 +327,9 @@ impl MixtralConfig {
         } else {
             "sytra-mixtral"
         };
+        let packed_group_size = architecture.packed_group_size().unwrap_or(32);
         let exact_packed_contract = architecture.quantization.bits == 4
-            && architecture.quantization.group_size == 32
+            && architecture.packed_group_size().is_some()
             && architecture.quantization.symmetric
             && architecture
                 .quantization
@@ -336,8 +338,7 @@ impl MixtralConfig {
                 .is_some_and(|dtype| dtype.eq_ignore_ascii_case("BF16"));
         let exact_expert_format = architecture.expert_format == WeightFormat::Bf16
             || (self.is_granite() && architecture.expert_format == WeightFormat::F32)
-            || (architecture.expert_format == WeightFormat::PackedInt4Group32
-                && exact_packed_contract);
+            || (architecture.expert_format.is_packed_int4() && exact_packed_contract);
         let has_packed_dense = manifest
             .storage
             .dense_tensors
@@ -386,11 +387,12 @@ impl MixtralConfig {
             )));
         }
         for expert in &manifest.storage.experts {
-            validate_expert_tensors(
+            validate_expert_tensors_with_group(
                 expert,
                 self.hidden_size,
                 self.expert_intermediate_size(),
                 &architecture.expert_format,
+                packed_group_size,
             )?;
         }
         let dense: HashMap<_, _> = manifest
@@ -408,11 +410,12 @@ impl MixtralConfig {
         )?;
         expect_float(&dense, "model.norm.weight", &[self.hidden_size], allow_f32)?;
         if !self.tie_word_embeddings {
-            expect_matrix(
+            expect_matrix_with_group(
                 &dense,
                 "lm_head.weight",
                 &[self.vocab_size, self.hidden_size],
                 allow_f32,
+                packed_group_size,
             )?;
         }
         for layer in 0..self.num_hidden_layers {
@@ -429,7 +432,7 @@ impl MixtralConfig {
                 &[self.hidden_size],
                 allow_f32,
             )?;
-            expect_matrix(
+            expect_matrix_with_group(
                 &dense,
                 &format!("{prefix}.self_attn.q_proj.weight"),
                 &[
@@ -437,9 +440,10 @@ impl MixtralConfig {
                     self.hidden_size,
                 ],
                 allow_f32,
+                packed_group_size,
             )?;
             for projection in ["k_proj", "v_proj"] {
-                expect_matrix(
+                expect_matrix_with_group(
                     &dense,
                     &format!("{prefix}.self_attn.{projection}.weight"),
                     &[
@@ -447,9 +451,10 @@ impl MixtralConfig {
                         self.hidden_size,
                     ],
                     allow_f32,
+                    packed_group_size,
                 )?;
             }
-            expect_matrix(
+            expect_matrix_with_group(
                 &dense,
                 &format!("{prefix}.self_attn.o_proj.weight"),
                 &[
@@ -457,6 +462,7 @@ impl MixtralConfig {
                     self.num_attention_heads * self.head_dimension(),
                 ],
                 allow_f32,
+                packed_group_size,
             )?;
             if self.is_qwen3() {
                 for projection in ["q_norm", "k_norm"] {
@@ -501,49 +507,55 @@ impl MixtralConfig {
                 let moe_prefix = self.resolve_moe_prefix(layer, |name| dense.contains_key(name))?;
                 let router =
                     self.resolve_router_weight(&moe_prefix, |name| dense.contains_key(name))?;
-                expect_matrix(
+                expect_matrix_with_group(
                     &dense,
                     &router,
                     &[self.num_local_experts, self.hidden_size],
                     allow_f32,
+                    packed_group_size,
                 )?;
                 if self.is_qwen2() {
                     let shared = self.shared_expert_intermediate_size.unwrap_or(0);
-                    expect_matrix(
+                    expect_matrix_with_group(
                         &dense,
                         &format!("{prefix}.mlp.shared_expert_gate.weight"),
                         &[1, self.hidden_size],
                         allow_f32,
+                        packed_group_size,
                     )?;
                     for projection in ["gate_proj", "up_proj"] {
-                        expect_matrix(
+                        expect_matrix_with_group(
                             &dense,
                             &format!("{prefix}.mlp.shared_expert.{projection}.weight"),
                             &[shared, self.hidden_size],
                             allow_f32,
+                            packed_group_size,
                         )?;
                     }
-                    expect_matrix(
+                    expect_matrix_with_group(
                         &dense,
                         &format!("{prefix}.mlp.shared_expert.down_proj.weight"),
                         &[self.hidden_size, shared],
                         allow_f32,
+                        packed_group_size,
                     )?;
                 }
             } else {
                 for projection in ["gate_proj", "up_proj"] {
-                    expect_matrix(
+                    expect_matrix_with_group(
                         &dense,
                         &format!("{prefix}.mlp.{projection}.weight"),
                         &[self.intermediate_size, self.hidden_size],
                         allow_f32,
+                        packed_group_size,
                     )?;
                 }
-                expect_matrix(
+                expect_matrix_with_group(
                     &dense,
                     &format!("{prefix}.mlp.down_proj.weight"),
                     &[self.hidden_size, self.intermediate_size],
                     allow_f32,
+                    packed_group_size,
                 )?;
             }
         }
@@ -551,14 +563,25 @@ impl MixtralConfig {
     }
 }
 
+#[cfg(test)]
 fn validate_expert_tensors(
     expert: &crate::ExpertLocation,
     hidden: usize,
     intermediate: usize,
     format: &WeightFormat,
 ) -> Result<(), MixtralError> {
-    if *format == WeightFormat::PackedInt4Group32 {
-        return validate_packed_expert_tensors(expert, hidden, intermediate);
+    validate_expert_tensors_with_group(expert, hidden, intermediate, format, 32)
+}
+
+fn validate_expert_tensors_with_group(
+    expert: &crate::ExpertLocation,
+    hidden: usize,
+    intermediate: usize,
+    format: &WeightFormat,
+    packed_group_size: usize,
+) -> Result<(), MixtralError> {
+    if format.is_packed_int4() {
+        return validate_packed_expert_tensors(expert, hidden, intermediate, packed_group_size);
     }
     let expected_dtype = match format {
         WeightFormat::Bf16 => "BF16",
@@ -623,6 +646,7 @@ fn validate_packed_expert_tensors(
     expert: &crate::ExpertLocation,
     hidden: usize,
     intermediate: usize,
+    group_size: usize,
 ) -> Result<(), MixtralError> {
     let projection = |predicate: fn(&str) -> bool, rows: usize, cols: usize| {
         let find = |suffix: &str| {
@@ -640,16 +664,16 @@ fn validate_packed_expert_tensors(
                 && tensor.length == (rows * cols.div_ceil(8) * 4) as u64
         }) && scales.is_some_and(|tensor| {
             tensor.dtype.as_deref() == Some("BF16")
-                && tensor.shape == [rows as u64, (cols / 32) as u64]
-                && tensor.length == (rows * (cols / 32) * 2) as u64
+                && tensor.shape == [rows as u64, (cols / group_size) as u64]
+                && tensor.length == (rows * (cols / group_size) * 2) as u64
         }) && logical_shape.is_some_and(|tensor| {
-            tensor.dtype.as_deref() == Some("I32") && tensor.shape == [2] && tensor.length == 8
+            validate_packed_shape_segment(tensor.dtype.as_deref(), &tensor.shape, tensor.length)
         })
     };
-    if !hidden.is_multiple_of(32) || !intermediate.is_multiple_of(32) {
-        return Err(MixtralError::Contract(
-            "packed INT4 standard-MoE widths must be divisible by group size 32".into(),
-        ));
+    if group_size == 0 || !hidden.is_multiple_of(group_size) || !intermediate.is_multiple_of(group_size) {
+        return Err(MixtralError::Contract(format!(
+            "packed INT4 standard-MoE widths must be divisible by group size {group_size}"
+        )));
     }
     let down = projection(
         |name| name.contains("down_proj") || name.contains(".w2.weight_"),
@@ -681,7 +705,7 @@ fn validate_packed_expert_tensors(
     );
     if !down || !(fused || (gate && up)) || (fused && (gate || up)) {
         return Err(MixtralError::Contract(format!(
-            "layer {} expert {} does not have one exact packed INT4/BF16 group-32 gated projection contract",
+            "layer {} expert {} does not have one exact packed INT4/BF16 group-{group_size} gated projection contract",
             expert.layer, expert.expert
         )));
     }
@@ -708,18 +732,29 @@ fn expect_float(
     Ok(())
 }
 
+#[cfg(test)]
 fn expect_matrix(
     tensors: &HashMap<&str, &crate::TensorSegment>,
     name: &str,
     shape: &[usize],
     allow_f32: bool,
 ) -> Result<(), MixtralError> {
+    expect_matrix_with_group(tensors, name, shape, allow_f32, 32)
+}
+
+fn expect_matrix_with_group(
+    tensors: &HashMap<&str, &crate::TensorSegment>,
+    name: &str,
+    shape: &[usize],
+    allow_f32: bool,
+    group_size: usize,
+) -> Result<(), MixtralError> {
     if tensors.contains_key(name) {
         return expect_float(tensors, name, shape, allow_f32);
     }
-    if shape.len() != 2 || !shape[1].is_multiple_of(32) {
+    if shape.len() != 2 || group_size == 0 || !shape[1].is_multiple_of(group_size) {
         return Err(MixtralError::Contract(format!(
-            "dense matrix {name} is missing and cannot use packed group-32 dimensions {shape:?}"
+            "dense matrix {name} is missing and cannot use packed group-{group_size} dimensions {shape:?}"
         )));
     }
     let prefix = name.strip_suffix(".weight").ok_or_else(|| {
@@ -742,19 +777,17 @@ fn expect_matrix(
     let rows = shape[0];
     let cols = shape[1];
     let words_per_row = cols.div_ceil(8);
-    let groups_per_row = cols / 32;
+    let groups_per_row = cols / group_size;
     if packed.dtype.as_deref() != Some("I32")
         || packed.shape != [rows as u64, words_per_row as u64]
         || packed.length != (rows * words_per_row * 4) as u64
         || scales.dtype.as_deref() != Some("BF16")
         || scales.shape != [rows as u64, groups_per_row as u64]
         || scales.length != (rows * groups_per_row * 2) as u64
-        || logical.dtype.as_deref() != Some("I32")
-        || logical.shape != [2]
-        || logical.length != 8
+        || !validate_packed_shape_segment(logical.dtype.as_deref(), &logical.shape, logical.length)
     {
         return Err(MixtralError::Contract(format!(
-            "dense matrix {name} does not have an exact packed INT4/BF16 group-32 triplet"
+            "dense matrix {name} does not have an exact packed INT4/BF16 group-{group_size} triplet"
         )));
     }
     Ok(())
@@ -774,6 +807,7 @@ pub struct MixtralExecutor<'a> {
     scheduler: &'a StreamingScheduler,
     cuda: Option<&'a CudaAccelerator>,
     dense_tile_bytes: u64,
+    packed_group_size: usize,
 }
 
 impl<'a> MixtralExecutor<'a> {
@@ -802,7 +836,15 @@ impl<'a> MixtralExecutor<'a> {
             scheduler,
             cuda,
             dense_tile_bytes,
+            packed_group_size: 32,
         })
+    }
+
+    pub fn with_packed_group_size(mut self, group_size: usize) -> Self {
+        if group_size > 0 {
+            self.packed_group_size = group_size;
+        }
+        self
     }
 
     pub fn forward_tokens(
@@ -1178,10 +1220,11 @@ impl<'a> MixtralExecutor<'a> {
                                     ..(*position + 1) * self.config.hidden_size],
                             );
                         }
-                        let output = standard_gated_expert_batch_resident(
+                        let output = standard_gated_expert_batch_resident_with_group(
                             resident,
                             self.config.hidden_size,
                             self.config.expert_intermediate_size(),
+                            self.packed_group_size,
                             active.len(),
                             &gathered,
                             ActivationKind::Silu,
@@ -1309,18 +1352,20 @@ impl<'a> MixtralExecutor<'a> {
                 ))),
             }
         } else {
-            crate::tiled_packed_int4_group32_bf16_matmul(
+            let group_size = self.packed_group_size;
+            crate::tiled_packed_int4_bf16_matmul(
                 self.dense,
                 tensor,
+                group_size,
                 self.dense_tile_bytes,
                 positions,
                 input,
                 move |packed, scales, rows, cols, positions, input| match cuda {
-                    Some(cuda) => cuda.int4_group32_bf16_bytes_matmul(
-                        packed, scales, rows, cols, positions, input,
+                    Some(cuda) => cuda.int4_group_bf16_bytes_matmul(
+                        packed, scales, rows, cols, group_size, positions, input,
                     ),
-                    None => crate::int4_group32_bf16_matmul_cpu(
-                        packed, scales, rows, cols, positions, input,
+                    None => crate::int4_group_bf16_matmul_cpu(
+                        packed, scales, rows, cols, group_size, positions, input,
                     )
                     .map_err(|error| error.to_string()),
                 },

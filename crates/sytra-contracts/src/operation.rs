@@ -23,6 +23,7 @@ pub struct PublishSpec {
     pub artifact_path: PathBuf,
     pub repo_id: String,
     pub private: bool,
+    #[serde(skip_serializing, default)]
     pub token: String,
 }
 
@@ -76,8 +77,6 @@ impl Operation {
                     spec.repo_id.clone(),
                     "--private".to_string(),
                     spec.private.to_string(),
-                    "--token".to_string(),
-                    spec.token.clone(),
                 ],
             },
         }

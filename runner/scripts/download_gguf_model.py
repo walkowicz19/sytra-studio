@@ -27,7 +27,7 @@ def download_model_fast(
         print("[ERROR] Please provide a HuggingFace repository ID using --model (e.g. --model owner/repo-name)")
         sys.exit(1)
 
-    print("=== Sytra 1.2.0: Verified Hugging Face/Xet Download ===")
+    print("=== Sytra 1.3.0: Verified Hugging Face/Xet Download ===")
     print(f"Repository: {repo_id}")
     print(f"Quantization Mode: {quant}")
     print(f"Purpose: {purpose}")

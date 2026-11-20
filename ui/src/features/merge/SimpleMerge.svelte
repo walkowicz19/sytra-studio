@@ -86,6 +86,13 @@
   let compat = $state<CompatResult | null>(null)
   let checking = $state(false)
   let submitting = $state(false)
+  type PerfMode = 'auto' | 'safe' | 'fast'
+  let performanceMode = $state<PerfMode>('auto')
+  const perfModes: { id: PerfMode; labelKey: string; hintKey: string }[] = [
+    { id: 'auto', labelKey: 'combine.perf.auto', hintKey: 'combine.perf.autoHint' },
+    { id: 'safe', labelKey: 'combine.perf.safe', hintKey: 'combine.perf.safeHint' },
+    { id: 'fast', labelKey: 'combine.perf.fast', hintKey: 'combine.perf.fastHint' },
+  ]
 
   async function checkCompat(): Promise<CompatResult | null> {
     checking = true
@@ -117,6 +124,7 @@
     const needsBase = method === 'ties' || method === 'dare_ties'
     const weight = 1 / filled.length
     const config = {
+      performance: { mode: performanceMode },
       version: 1,
       merge_method: method,
       base_model: needsBase ? filled[0] : null,
@@ -163,41 +171,51 @@
           {#each models as _, i}
             {@const vStat = getModelVramStatus(models[i])}
             <div class="model-row-group">
-              <div class="model-row">
+              <div class="model-slot-grid">
                 <span class="model-index">{i + 1}</span>
                 <input
                   class="input input-mono"
-                  placeholder={i === 0 ? 'e.g. mistralai/Mistral-7B-v0.1 or C:\\models\\model.gguf' : 'e.g. org/knowledge-ft'}
+                  placeholder={i === 0 ? 'e.g. mistralai/Mistral-7B-v0.1 or C:\\models\\model.gguf' : 'e.g. HuggingFaceH4/zephyr-7b-beta'}
                   bind:value={models[i]}
                   list="catalog-models"
                 />
-
-                <button class="btn btn-secondary btn-sm" onclick={() => pickLocalModel(i)} title="Browse OS File Explorer for local model file or folder">
-                  <i class="bi bi-folder2-open"></i> Browse
-                </button>
-
-                {#if models.length > 2}
-                  <button class="btn btn-ghost btn-icon" onclick={() => removeModel(i)} aria-label="Remove model">
-                    <i class="bi bi-x-lg"></i>
+                <div class="model-slot-actions">
+                  <button type="button" class="btn btn-secondary" onclick={() => pickLocalModel(i)} title="Browse OS File Explorer for local model file or folder">
+                    <i class="bi bi-folder2-open"></i> Browse
                   </button>
-                {/if}
-              </div>
+                  {#if models.length > 2}
+                    <button type="button" class="btn btn-ghost btn-icon" onclick={() => removeModel(i)} aria-label="Remove model">
+                      <i class="bi bi-x-lg"></i>
+                    </button>
+                  {/if}
+                </div>
 
-              <!-- Local Model Select & VRAM compatibility status -->
-              <div class="model-meta-row">
-                {#if localModels.length > 0}
-                  <select class="select select-sm local-model-select" onchange={(e) => models[i] = (e.target as HTMLSelectElement).value}>
-                    <option value="">-- Choose from Scanned Local Models --</option>
-                    {#each localModels as lm}
-                      <option value={lm.path}>[{lm.category.toUpperCase()}] {lm.name} ({lm.size_gb} GB)</option>
-                    {/each}
-                  </select>
-                {/if}
-
-                {#if vStat.status === 'ok'}
-                  <span class="badge badge-green"><i class="bi bi-check-circle-fill"></i> {vStat.label}</span>
-                {:else if vStat.status === 'host'}
-                  <span class="badge badge-warning"><i class="bi bi-memory"></i> {vStat.label}</span>
+                {#if localModels.length > 0 || vStat.status !== 'unknown'}
+                  <div class="model-local-cell">
+                    {#if localModels.length > 0}
+                      <select
+                        class="select local-model-select"
+                        aria-label="Local model for slot {i + 1}"
+                        value={localModels.some(lm => lm.path === models[i]) ? models[i] : ''}
+                        onchange={(e) => {
+                          const val = (e.currentTarget as HTMLSelectElement).value
+                          if (val) models[i] = val
+                        }}
+                      >
+                        <option value="">-- Choose from Scanned Local Models --</option>
+                        {#each localModels as lm}
+                          <option value={lm.path}>[{lm.category.toUpperCase()}] {lm.name} ({lm.size_gb} GB)</option>
+                        {/each}
+                      </select>
+                    {/if}
+                  </div>
+                  <div class="model-badge-cell">
+                    {#if vStat.status === 'ok'}
+                      <span class="badge badge-green"><i class="bi bi-check-circle-fill"></i> {vStat.label}</span>
+                    {:else if vStat.status === 'host'}
+                      <span class="badge badge-warning"><i class="bi bi-memory"></i> {vStat.label}</span>
+                    {/if}
+                  </div>
                 {/if}
               </div>
             </div>
@@ -237,6 +255,32 @@
                 <span class="choice-label">{t(`combine.goal.${g}`)}</span>
                 <span class="choice-hint">{t(`combine.goal.${g}Hint`)}</span>
               </div>
+            </button>
+          {/each}
+        </div>
+      </section>
+
+      <!-- 03 · Performance -->
+      <section class="step">
+        <div class="step-head">
+          <span class="step-num">03</span>
+          <div>
+            <div class="step-title">{t('combine.step3.title')}</div>
+            <div class="step-sub">{t('combine.step3.sub')}</div>
+          </div>
+        </div>
+
+        <div class="choice-row" role="radiogroup" aria-label={t('combine.step3.title')}>
+          {#each perfModes as opt}
+            <button
+              type="button"
+              class="choice choice-tall"
+              class:selected={performanceMode === opt.id}
+              aria-pressed={performanceMode === opt.id}
+              onclick={() => (performanceMode = opt.id)}
+            >
+              <span class="choice-label">{t(opt.labelKey)}</span>
+              <span class="choice-hint">{t(opt.hintKey)}</span>
             </button>
           {/each}
         </div>
@@ -317,39 +361,53 @@
 
   .model-list { display: flex; flex-direction: column; gap: var(--space-3); }
   .model-row-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: var(--color-surface-raised);
-    padding: var(--space-3);
+    background: var(--color-surface);
+    padding: var(--space-3) var(--space-4);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-card, 8px);
+    border-radius: var(--radius-card, var(--radius-md));
   }
-  .model-row { display: flex; align-items: center; gap: var(--space-4); }
-  .model-meta-row {
+  .model-slot-grid {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+  }
+  .model-slot-actions {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    padding-left: 28px;
-    flex-wrap: wrap;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+  .model-slot-actions :global(.btn) { height: 40px; }
+  .model-local-cell {
+    grid-column: 2;
+    min-width: 0;
+  }
+  .model-badge-cell {
+    grid-column: 3;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
   }
   .local-model-select {
-    flex: 1;
-    max-width: 360px;
-    font-size: 0.8rem;
+    width: 100%;
+    height: 36px;
+    font-size: 12px;
   }
-  .model-row :global(.input) { height: 46px; font-size: 14px; padding: 0 var(--space-4); }
+  .model-slot-grid :global(.input) { height: 40px; font-size: 13px; padding: 0 var(--space-3); }
   .model-index {
     font-family: var(--font-display);
     font-weight: 600;
-    font-size: 17px;
+    font-size: 16px;
     color: var(--color-ink-ghost);
-    width: 20px;
+    width: 24px;
     text-align: center;
-    flex-shrink: 0;
   }
 
   .choice-col { display: flex; flex-direction: column; gap: var(--space-3); }
+  .choice-row { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+  .choice-row .choice { flex: 1; min-width: 190px; }
+  .choice-tall { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
 
   .choice {
     display: flex;

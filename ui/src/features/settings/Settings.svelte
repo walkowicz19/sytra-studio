@@ -3,11 +3,20 @@
   import { tabStore, setTab, run, hwStore, themeStore, toggleTheme, uiMode, toggleUiMode, pushToast, customThemeStore, applyCustomTheme } from '../../store.svelte'
   import { t, LOCALES, localeStore, setLocale } from '../../i18n.svelte'
   import type { Locale } from '../../i18n.svelte'
-  import { api } from '../../api'
+  import { api, type McpStatusReport } from '../../api'
 
   let cacheDir = $state('')
   let detectedRamMb = $state(0)
   let memoryChoice = $state('auto')
+  let defaultContext = $state(4096)
+  let defaultTemp = $state(0.7)
+  let defaultKvQuant = $state<'fp16' | 'q8_0' | 'q4_0'>('q8_0')
+  let defaultFlashAttn = $state(true)
+  let defaultCpuKv = $state(false)
+  let defaultVramMb = $state<number | undefined>(8192)
+  let savingInference = $state(false)
+  let mcpStatus = $state<McpStatusReport | null>(null)
+  let installingMcp = $state(false)
 
   // Visual Studio preview auto-updates live
   $effect(() => {
@@ -66,6 +75,14 @@
       cacheDir = settings.hf_cache_dir
       detectedRamMb = settings.detected_ram_mb
       memoryChoice = settings.main_memory_limit_mb?.toString() ?? 'auto'
+      defaultContext = settings.default_context_window ?? 4096
+      defaultTemp = Math.round((settings.default_temperature ?? 0.7) * 1000) / 1000
+      const kv = settings.kv_cache_quant
+      defaultKvQuant = (kv === 'fp16' || kv === 'q8_0' || kv === 'q4_0') ? kv : 'q8_0'
+      defaultFlashAttn = settings.enable_flash_attention ?? true
+      defaultCpuKv = settings.cpu_kv_cache ?? false
+      defaultVramMb = settings.vram_limit_mb ?? undefined
+      mcpStatus = await api.getMcpStatus()
     } catch (e) {
       pushToast('error', `Failed to load settings: ${e instanceof Error ? e.message : String(e)}`)
     }
@@ -90,6 +107,72 @@
       memoryChoice = result.main_memory_limit_mb?.toString() ?? 'auto'
       pushToast('success', 'Main memory limit saved')
     } catch (e) { pushToast('error', String(e)) }
+  }
+
+  async function saveInferenceDefaults() {
+    savingInference = true
+    try {
+      const res = await api.setInferenceSettings({
+        default_context_window: Number(defaultContext),
+        default_temperature: Number(defaultTemp),
+        kv_cache_quant: defaultKvQuant,
+        enable_flash_attention: defaultFlashAttn,
+        cpu_kv_cache: defaultCpuKv,
+        vram_limit_mb: defaultVramMb ? Number(defaultVramMb) : null,
+      })
+      defaultContext = res.default_context_window ?? defaultContext
+      defaultTemp = Math.round((res.default_temperature ?? defaultTemp) * 1000) / 1000
+      if (res.kv_cache_quant === 'fp16' || res.kv_cache_quant === 'q8_0' || res.kv_cache_quant === 'q4_0') {
+        defaultKvQuant = res.kv_cache_quant
+      }
+      defaultFlashAttn = res.enable_flash_attention ?? defaultFlashAttn
+      defaultCpuKv = res.cpu_kv_cache ?? defaultCpuKv
+      defaultVramMb = res.vram_limit_mb ?? undefined
+      pushToast('success', 'Inference defaults saved')
+    } catch (e) {
+      pushToast('error', String(e))
+    } finally {
+      savingInference = false
+    }
+  }
+
+  async function configureMcp(clients?: string[]) {
+    installingMcp = true
+    try {
+      const res = await api.installMcpClients(clients)
+      mcpStatus = res.status
+      const count = res.outcomes.length
+      pushToast('success', count > 0
+        ? `MCP config updated for ${res.outcomes.map((o) => o.label).join(', ')}`
+        : 'No pre-existing MCP client folders detected; select an explicit client below.')
+    } catch (e) {
+      pushToast('error', `MCP install failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      installingMcp = false
+    }
+  }
+
+  async function removeMcp(clientId: string) {
+    installingMcp = true
+    try {
+      const res = await api.uninstallMcpClients([clientId])
+      mcpStatus = res.status
+      pushToast('success', 'MCP entry removed')
+    } catch (e) {
+      pushToast('error', String(e))
+    } finally {
+      installingMcp = false
+    }
+  }
+
+  async function copyMcpConfig() {
+    if (!mcpStatus?.generic_json) return
+    try {
+      await navigator.clipboard.writeText(mcpStatus.generic_json)
+      pushToast('success', 'MCP config JSON copied')
+    } catch (e) {
+      pushToast('error', String(e))
+    }
   }
 
   function set<K extends keyof typeof customThemeStore>(key: K, val: (typeof customThemeStore)[K]) {
@@ -270,7 +353,66 @@
                   <option value={Math.floor(detectedRamMb * 0.75)}>75% ({(detectedRamMb * 0.75 / 1024).toFixed(0)} GB)</option>
                   <option value={Math.floor(detectedRamMb * 0.9)}>90% ({(detectedRamMb * 0.9 / 1024).toFixed(0)} GB)</option>
                 {/if}
+                {#if memoryChoice !== 'auto' && ![Math.floor(detectedRamMb * 0.5), Math.floor(detectedRamMb * 0.75), Math.floor(detectedRamMb * 0.9)].map(String).includes(memoryChoice)}
+                  <option value={memoryChoice}>Custom ({memoryChoice} MB)</option>
+                {/if}
               </select>
+            </div>
+          </section>
+
+          <!-- Global Inference Defaults -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-lightning-charge"></i> Inference Defaults
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
+              <div class="infer-grid">
+                <div class="field">
+                  <label for="infer-context" class="settings-label">Default context window</label>
+                  <input id="infer-context" class="input" type="number" min="1" max="2097152" bind:value={defaultContext} />
+                  <p class="settings-hint">Applied unless overridden per model.</p>
+                </div>
+                <div class="field">
+                  <label for="infer-temp" class="settings-label">Default temperature</label>
+                  <input id="infer-temp" class="input" type="number" min="0" max="2" step="0.05" bind:value={defaultTemp} />
+                  <p class="settings-hint">0 to 2; applied by built-in chat and proxy defaults.</p>
+                </div>
+                <div class="field">
+                  <label for="infer-kv" class="settings-label">KV cache precision</label>
+                  <select id="infer-kv" class="select" bind:value={defaultKvQuant}>
+                    <option value="fp16">FP16</option>
+                    <option value="q8_0">Q8_0</option>
+                    <option value="q4_0">Q4_0</option>
+                  </select>
+                  <p class="settings-hint">Q4_0 requires Flash Attention.</p>
+                </div>
+                <div class="field">
+                  <label for="infer-vram" class="settings-label">VRAM limit (MB)</label>
+                  <input id="infer-vram" class="input" type="number" min="1" bind:value={defaultVramMb} placeholder="Auto" />
+                  <p class="settings-hint">Blank uses detected GPU VRAM.</p>
+                </div>
+              </div>
+              <div class="infer-toggles">
+                <label class="infer-toggle-row" for="infer-fa">
+                  <span class="settings-label">Flash Attention</span>
+                  <span class="toggle">
+                    <input id="infer-fa" type="checkbox" bind:checked={defaultFlashAttn} />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </span>
+                </label>
+                <label class="infer-toggle-row" for="infer-cpu-kv">
+                  <span class="settings-label">CPU KV cache</span>
+                  <span class="toggle">
+                    <input id="infer-cpu-kv" type="checkbox" bind:checked={defaultCpuKv} />
+                    <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  </span>
+                </label>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm" id="btn-save-inference-defaults" onclick={saveInferenceDefaults} disabled={savingInference} style="align-self:flex-start">
+                Save inference defaults
+              </button>
             </div>
           </section>
 
@@ -304,7 +446,7 @@
           </section>
         </div>
 
-        <!-- ── RIGHT COLUMN — Visual Studio ───────────── -->
+        <!-- ── RIGHT COLUMN — Visual Studio & MCP ────────── -->
         <div class="settings-col">
           <section class="card vs-card">
             <div class="card-header vs-header">
@@ -594,6 +736,76 @@
 
             </div>
           </section>
+
+          <!-- Direct MCP Integration -->
+          <section class="card">
+            <div class="card-header">
+              <span class="text-label" style="display:flex;align-items:center;gap:var(--space-2)">
+                <i class="bi bi-plug"></i> MCP Integration
+              </span>
+            </div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:var(--space-3)">
+              {#if mcpStatus}
+                <div class="settings-info">
+                  <span class="settings-label">Direct native MCP binary</span>
+                  <p class="settings-hint input-mono" style="word-break:break-all">{mcpStatus.mcp_binary_path}</p>
+                </div>
+                <div class="mcp-top-actions">
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm mcp-top-btn"
+                    id="btn-install-mcp-auto"
+                    disabled={installingMcp}
+                    onclick={() => configureMcp()}
+                  >
+                    Install for detected clients
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm mcp-top-btn"
+                    id="btn-copy-mcp-json"
+                    onclick={copyMcpConfig}
+                  >
+                    Copy JSON config
+                  </button>
+                </div>
+                <div class="mcp-client-list">
+                  {#each mcpStatus.clients as client}
+                    <div class="mcp-client-row">
+                      <div class="settings-info">
+                        <span class="settings-label">{client.label}</span>
+                        <span class="settings-hint input-mono mcp-path">{client.config_path}</span>
+                      </div>
+                      <div class="mcp-client-actions">
+                        {#if client.configured}
+                          <span class="badge badge-info mcp-status-badge">Configured</span>
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-sm mcp-action-btn"
+                            disabled={installingMcp}
+                            onclick={() => removeMcp(client.id)}
+                          >
+                            Remove
+                          </button>
+                        {:else}
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-sm mcp-action-btn"
+                            disabled={installingMcp}
+                            onclick={() => configureMcp([client.id])}
+                          >
+                            Configure
+                          </button>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <span class="text-small">Checking MCP integration...</span>
+              {/if}
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -603,17 +815,42 @@
 <style>
   .settings-grid {
     display: grid;
-    grid-template-columns: 360px 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-4);
     align-items: start;
+    width: 100%;
   }
-  @media (max-width: 900px) {
+  @media (max-width: 1040px) {
     .settings-grid { grid-template-columns: 1fr; }
   }
   .settings-col {
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    min-width: 0;
+  }
+  .infer-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    align-items: start;
+  }
+  @media (max-width: 640px) { .infer-grid { grid-template-columns: 1fr; } }
+  .infer-toggles {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+  @media (max-width: 640px) { .infer-toggles { grid-template-columns: 1fr; } }
+  .infer-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
   }
   .settings-item {
     display: flex;
@@ -633,6 +870,45 @@
   .hw-label { font-size: 12px; color: var(--color-ink-subtle); }
   .hw-val { font-size: 12px; font-weight: 500; font-family: var(--font-mono); color: var(--color-ink); }
   .badge-info { background: var(--color-info-bg); color: var(--color-info); border: 1px solid var(--color-info); }
+  .mcp-top-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .mcp-top-btn {
+    height: 30px;
+    padding: 0 var(--space-3);
+  }
+  .mcp-client-list { display: flex; flex-direction: column; }
+  .mcp-client-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+    border-top: 1px dashed var(--color-border);
+  }
+  .mcp-client-row .settings-info { min-width: 0; flex: 1; }
+  .mcp-path { word-break: break-all; }
+  .mcp-client-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    flex-shrink: 0;
+  }
+  .mcp-status-badge,
+  .mcp-action-btn {
+    height: 28px;
+    padding: 0 var(--space-3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    line-height: 1;
+  }
+  .mcp-action-btn { min-width: 96px; }
 
   /* ── Visual Studio ─────────────────────────────────────────────────── */
   .vs-card { overflow: hidden; }

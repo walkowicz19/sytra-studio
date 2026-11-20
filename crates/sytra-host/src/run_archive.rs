@@ -26,10 +26,13 @@ pub struct RunArchive {
 }
 
 impl RunArchive {
-    pub fn new(app_data_dir: &Path) -> Self {
-        Self {
-            archive_dir: app_data_dir.join("runs"),
-        }
+    pub fn new(base_dir: &Path) -> Self {
+        let archive_dir = if base_dir.file_name().and_then(|s| s.to_str()) == Some("runs") {
+            base_dir.to_path_buf()
+        } else {
+            base_dir.join("runs")
+        };
+        Self { archive_dir }
     }
 
     fn file_path(&self, op_id: Uuid) -> PathBuf {

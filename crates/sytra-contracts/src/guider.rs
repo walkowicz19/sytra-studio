@@ -147,12 +147,13 @@ impl Guider {
             };
         }
 
-        if model_refs.len() > 3 {
+        let cap = if method == MergeMethod::Moe { 16 } else { 3 };
+        if model_refs.len() > cap {
             return Compatibility {
                 verdict: Verdict::Red,
                 reason: format!(
-                    "Model count {} exceeds the product limit of 3",
-                    model_refs.len()
+                    "Model count {} exceeds the product limit of {}",
+                    model_refs.len(), cap
                 ),
             };
         }
@@ -357,6 +358,51 @@ mod lineage_tests {
     }
 
     #[test]
+    fn catalog_contains_kairos_family_bases() {
+        let guider = Guider::new();
+        assert!(
+            guider.resolve_model("openbmb/MiniCPM5-2B").is_none(),
+            "MiniCPM5-2B was a temporary 2B base and must not stay in the catalog"
+        );
+
+        let sophron = guider
+            .resolve_model("Qwen/Qwen2.5-Coder-14B-Instruct")
+            .expect("Qwen2.5-Coder-14B-Instruct is the Kairos Sophron base");
+        assert_eq!(sophron.architecture, "Qwen2ForCausalLM");
+        assert!(sophron.allows_download());
+        assert!(sophron.allows_finetune());
+
+        let sotos = guider
+            .resolve_model("Qwen/Qwen3-14B")
+            .expect("Qwen3-14B is the Kairos Sotos base");
+        assert_eq!(sotos.architecture, "Qwen3ForCausalLM");
+        assert!(sotos.allows_download());
+        assert!(sotos.allows_finetune());
+
+        let sophia = guider
+            .resolve_model("Qwen/Qwen3.8-27B")
+            .expect("Qwen3.8-27B is the Kairos Sophia base");
+        assert_eq!(sophia.architecture, "Qwen3_5ForConditionalGeneration");
+        assert!(sophia.allows_download());
+        assert!(sophia.allows_finetune());
+        assert_eq!(
+            sophia.default_target_modules,
+            [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "in_proj_qkv",
+                "in_proj_z",
+                "out_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj"
+            ]
+        );
+    }
+
+    #[test]
     fn catalog_is_expanded_and_download_gated_placeholders() {
         let guider = Guider::new();
         assert!(
@@ -364,8 +410,30 @@ mod lineage_tests {
             "catalog should list a broad Hugging Face download set, got {}",
             guider.catalog().len()
         );
-        let placeholder = guider.resolve_model("org/knowledge-ft").unwrap();
-        assert!(!placeholder.allows_download());
+        assert!(
+            guider.catalog().iter().all(|m| m.allows_download()),
+            "catalog should not include unusable non-downloadable test entries"
+        );
+        let synthetic_placeholder = ModelCatalogEntry {
+            model_id: "org/knowledge-ft".into(),
+            name: "Placeholder".into(),
+            param_count: 1,
+            architecture: "MistralForCausalLM".into(),
+            dtype: "bfloat16".into(),
+            moe_active_params: None,
+            license: "apache-2.0".into(),
+            default_target_modules: vec![],
+            tokenizer_id: "mistralai/Mistral-7B-v0.1".into(),
+            use_case_tags: vec![],
+            benchmark_hint: "medium".into(),
+            format: "safetensors".into(),
+            downloadable: true,
+            workflows: vec![],
+            gated: false,
+            approx_download_gb: None,
+            explicit_risks: vec![],
+        };
+        assert!(!synthetic_placeholder.allows_download());
         let olmoe = guider
             .resolve_model("allenai/OLMoE-1B-7B-0125-Instruct-GGUF")
             .expect("OLMoE GGUF must be downloadable from the catalog");
@@ -378,7 +446,19 @@ mod lineage_tests {
         use crate::model_alerts::alerts_for;
         let guider = Guider::new();
         let model = guider.resolve_model("Qwen/Qwen3.5-9B-Base").unwrap();
-        let alerts = alerts_for(model, Some(12 * 1024), Some(12 * 1024));
+        let alerts = alerts_for(model, Some(12 * 1024), Some(16 * 1024));
+        assert!(alerts.iter().any(|a| a.code == "never_qwen2"));
+        assert!(alerts.iter().any(|a| a.code == "vision_not_text_lora"));
+    }
+
+    #[test]
+    fn qwen38_sophia_alerts_hybrid_vision() {
+        use crate::model_alerts::alerts_for;
+        let guider = Guider::new();
+        let model = guider
+            .resolve_model("Qwen/Qwen3.8-27B")
+            .expect("Qwen3.8-27B must be catalogued before this alert test");
+        let alerts = alerts_for(model, Some(12 * 1024), Some(16 * 1024));
         assert!(alerts.iter().any(|a| a.code == "never_qwen2"));
         assert!(alerts.iter().any(|a| a.code == "vision_not_text_lora"));
     }

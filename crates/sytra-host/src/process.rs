@@ -1,14 +1,31 @@
 use std::process::{Command, Stdio};
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(target_os = "windows")]
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+
+/// Suppresses transient console windows when spawning helper processes from the GUI app on Windows.
+pub fn apply_hidden_window(cmd: &mut Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// Keep Hub/merge/train children below the desktop compositor on every OS.
-/// Windows: BELOW_NORMAL. Unix: a separate process group so stop() can
+/// Windows: BELOW_NORMAL + CREATE_NO_WINDOW. Unix: a separate process group so stop() can
 /// signal the tree; Python then `nice(10)`s itself at startup.
 pub fn apply_desktop_priority(cmd: &mut Command) {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
-        cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW);
     }
     #[cfg(unix)]
     {
@@ -23,7 +40,9 @@ pub fn apply_desktop_priority(cmd: &mut Command) {
 pub fn kill_process_tree(pid: u32) {
     #[cfg(target_os = "windows")]
     {
-        let status = Command::new("taskkill")
+        let mut cmd = Command::new("taskkill");
+        apply_hidden_window(&mut cmd);
+        let status = cmd
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())

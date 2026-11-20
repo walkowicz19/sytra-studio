@@ -11,10 +11,24 @@ use sytra_contracts::{
     run_config::RunConfig,
     guider::Compatibility,
 };
-use sytra_host::{commands, materialize::materialize_dataset_for_config};
+use sytra_host::{commands, materialize::prepare_training_datasets};
 
 use crate::helpers::{spawn_telemetry_stream, write_temp_yaml};
 use crate::state::AppState;
+
+#[tauri::command]
+pub async fn prepare_dataset(
+    state: State<'_, AppState>,
+    operation: String,
+    options: Value,
+) -> Result<Value, String> {
+    let workspace = state.workspace.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        sytra_host::dataset_fabric::run(&workspace, &operation, &options)
+    })
+    .await
+    .map_err(|e| format!("Dataset preparation task failed: {e}"))?
+}
 
 #[tauri::command]
 pub async fn start_train(
@@ -22,12 +36,14 @@ pub async fn start_train(
     app: AppHandle,
     config: Value,
 ) -> Result<String, String> {
+    let mut config = config;
+    sytra_host::training_source::normalize_aliases(&mut config)?;
     let mut run_config: RunConfig =
         serde_json::from_value(config.clone()).map_err(|e| format!("Bad train config: {e}"))?;
+    sytra_host::training_source::resolve(&mut run_config)?;
     let ws = &state.workspace;
     let dataset_dir = ws.join("runs").join("dataset_materialized");
-    materialize_dataset_for_config(&mut run_config.data, run_config.train_mode, &dataset_dir)
-        .await?;
+    prepare_training_datasets(&mut run_config, &dataset_dir).await?;
     let config_path = {
         std::fs::create_dir_all(ws.join("runs")).map_err(|e| e.to_string())?;
         let config_val = serde_json::to_value(&run_config).map_err(|e| e.to_string())?;
@@ -38,10 +54,10 @@ pub async fn start_train(
         config_path,
     };
     let op = Operation::Train(spec);
-    let runner = state.runner.lock().map_err(|_| "lock")?;
-    let archive = state.archive.lock().map_err(|_| "lock")?;
-    let guard = state.guard.lock().map_err(|_| "lock")?;
-    let guider = state.guider.lock().map_err(|_| "lock")?;
+    let runner = state.runner.lock().unwrap_or_else(|p| p.into_inner());
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
+    let guard = state.guard.lock().unwrap_or_else(|p| p.into_inner());
+    let guider = state.guider.lock().unwrap_or_else(|p| p.into_inner());
     let (op_id, rx) = commands::start_op(op, &runner, &archive, &guard, &guider)?;
     spawn_telemetry_stream(app, op_id, rx);
     Ok(op_id.to_string())
@@ -65,10 +81,10 @@ pub async fn start_merge(
         config_path,
     };
     let op = Operation::Merge(spec);
-    let runner = state.runner.lock().map_err(|_| "lock")?;
-    let archive = state.archive.lock().map_err(|_| "lock")?;
-    let guard = state.guard.lock().map_err(|_| "lock")?;
-    let guider = state.guider.lock().map_err(|_| "lock")?;
+    let runner = state.runner.lock().unwrap_or_else(|p| p.into_inner());
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
+    let guard = state.guard.lock().unwrap_or_else(|p| p.into_inner());
+    let guider = state.guider.lock().unwrap_or_else(|p| p.into_inner());
     let (op_id, rx) = commands::start_op(op, &runner, &archive, &guard, &guider)?;
     spawn_telemetry_stream(app, op_id, rx);
     Ok(op_id.to_string())
@@ -77,21 +93,21 @@ pub async fn start_merge(
 #[tauri::command]
 pub fn stop_op(state: State<'_, AppState>, op_id: String) -> Result<(), String> {
     let id = Uuid::parse_str(&op_id).map_err(|_| "invalid uuid")?;
-    let runner = state.runner.lock().map_err(|_| "lock")?;
-    let archive = state.archive.lock().map_err(|_| "lock")?;
+    let runner = state.runner.lock().unwrap_or_else(|p| p.into_inner());
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
     commands::stop_op(id, &runner, &archive)
 }
 
 #[tauri::command]
 pub fn list_runs(state: State<'_, AppState>) -> Result<Vec<sytra_contracts::OpRecord>, String> {
-    let archive = state.archive.lock().map_err(|_| "lock")?;
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
     commands::list_ops(&archive)
 }
 
 #[tauri::command]
 pub fn delete_run(state: State<'_, AppState>, op_id: String) -> Result<(), String> {
     let id = Uuid::parse_str(&op_id).map_err(|_| "invalid uuid")?;
-    let archive = state.archive.lock().map_err(|_| "lock")?;
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
     commands::delete_op(id, &archive)
 }
 
@@ -106,8 +122,8 @@ pub fn estimate_memory(
         config: rc,
         config_path: PathBuf::from("estimate"),
     };
-    let guard = state.guard.lock().map_err(|_| "lock")?;
-    let guider = state.guider.lock().map_err(|_| "lock")?;
+    let guard = state.guard.lock().unwrap_or_else(|p| p.into_inner());
+    let guider = state.guider.lock().unwrap_or_else(|p| p.into_inner());
     commands::estimate_memory(model_ref, train_spec, &guard, &guider)
 }
 
@@ -120,7 +136,7 @@ pub fn merge_check(
 ) -> Result<Compatibility, String> {
     let method: MergeMethod =
         serde_json::from_str(&format!("\"{}\"", method)).map_err(|e| e.to_string())?;
-    let guider = state.guider.lock().map_err(|_| "lock")?;
+    let guider = state.guider.lock().unwrap_or_else(|p| p.into_inner());
     commands::merge_check(model_refs, method, base_model, &guider)
 }
 
@@ -135,7 +151,7 @@ pub async fn publish_run(
     license: Option<String>,
 ) -> Result<String, String> {
     let run_id = Uuid::parse_str(&run_op_id).map_err(|_| "Invalid run UUID")?;
-    let archive = state.archive.lock().map_err(|_| "lock")?;
+    let archive = state.archive.lock().unwrap_or_else(|p| p.into_inner());
     let run_record = archive
         .load(run_id)
         .map_err(|e| format!("Failed to find run: {e}"))?;
@@ -156,9 +172,9 @@ pub async fn publish_run(
         token,
     };
     let op = Operation::Publish(spec);
-    let runner = state.runner.lock().map_err(|_| "lock")?;
-    let guard = state.guard.lock().map_err(|_| "lock")?;
-    let guider = state.guider.lock().map_err(|_| "lock")?;
+    let runner = state.runner.lock().unwrap_or_else(|p| p.into_inner());
+    let guard = state.guard.lock().unwrap_or_else(|p| p.into_inner());
+    let guider = state.guider.lock().unwrap_or_else(|p| p.into_inner());
     let (op_id, rx) = commands::start_op(op, &runner, &archive, &guard, &guider)?;
     spawn_telemetry_stream(app, op_id, rx);
     Ok(op_id.to_string())

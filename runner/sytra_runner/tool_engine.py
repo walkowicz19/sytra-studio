@@ -8,8 +8,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import urllib.request
 from typing import Any, Callable, Dict, List, Optional
+
+from .web_search import search_web
 
 
 REACT_SYSTEM_PROMPT = """You are a helpful AI assistant equipped with tool-calling capabilities.
@@ -125,20 +126,6 @@ class UniversalToolEngine:
                 "handler": self._tool_search_web
             }
 
-        if "evaluate_python" not in self.tools:
-            self.tools["evaluate_python"] = {
-                "name": "evaluate_python",
-                "description": "Executes a Python code expression or calculation safely and returns the result.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {"type": "string", "description": "Python code snippet or math expression"}
-                    },
-                    "required": ["code"]
-                },
-                "handler": self._tool_evaluate_python
-            }
-
         if "list_directory" not in self.tools:
             self.tools["list_directory"] = {
                 "name": "list_directory",
@@ -166,26 +153,62 @@ class UniversalToolEngine:
         return REACT_SYSTEM_PROMPT.format(tools_json=tools_str)
 
     def extract_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
-        """Parse potential tool call JSON block from model text output."""
+        """Extract a single unambiguous tool_call JSON object from model text."""
         if "tool_call" not in text:
             return None
 
-        # Extract markdown json block or direct json object
-        patterns = [
-            r"```json\s*(\{\s*\"tool_call\"[\s\S]*?\})\s*```",
-            r"(\{\s*\"tool_call\"[\s\S]*?\})"
-        ]
+        candidates: List[Dict[str, Any]] = []
+        idx = 0
+        n = len(text)
+        while idx < n:
+            if text[idx] != "{":
+                idx += 1
+                continue
+            depth = 0
+            in_str = False
+            escaped = False
+            end = -1
+            for j in range(idx, n):
+                ch = text[j]
+                if in_str:
+                    if escaped:
+                        escaped = False
+                    elif ch == "\\":
+                        escaped = True
+                    elif ch == '"':
+                        in_str = False
+                elif ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = j + 1
+                        break
+            if end == -1:
+                break
+            snippet = text[idx:end]
+            idx = end
+            if '"tool_call"' not in snippet:
+                continue
+            try:
+                payload = json.loads(snippet)
+            except Exception:
+                continue
+            if (
+                isinstance(payload, dict)
+                and isinstance(payload.get("tool_call"), dict)
+                and isinstance(payload["tool_call"].get("name"), str)
+                and payload["tool_call"]["name"].strip()
+            ):
+                args = payload["tool_call"].get("arguments")
+                if args is None or isinstance(args, dict):
+                    candidates.append(payload)
 
-        for p in patterns:
-            match = re.search(p, text)
-            if match:
-                try:
-                    payload = json.loads(match.group(1))
-                    if isinstance(payload, dict) and "tool_call" in payload:
-                        return payload
-                except Exception:
-                    continue
-        return None
+        if len(candidates) != 1:
+            return None
+        return candidates[0]
 
     def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Execute a registered tool or custom handler."""
@@ -205,38 +228,24 @@ class UniversalToolEngine:
 
     # ─── Built-in Tool Handlers ────────────────────────────────────────────────
     def _tool_search_web(self, query: str) -> str:
-        try:
-            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
-                clean = re.sub(r'<[^>]+>', ' ', html)
-                snippets = [s.strip() for s in clean.split() if len(s.strip()) > 3]
-                snippet_text = " ".join(snippets[:100])
-                return f"Web Search Result for '{query}': {snippet_text[:800]}..."
-        except Exception as e:
-            return f"Search notice: Could not fetch web results for '{query}' ({e})."
+        return json.dumps(search_web(query), ensure_ascii=False)
 
     def _tool_evaluate_python(self, code: str) -> str:
-        try:
-            # Safe eval / exec in isolated scope
-            loc = {}
-            exec(f"res = ({code})", {}, loc)
-            return f"Result: {loc.get('res')}"
-        except Exception:
-            try:
-                loc = {}
-                exec(code, {}, loc)
-                return f"Execution Output: {loc}"
-            except Exception as e:
-                return f"Python Evaluation Error: {e}"
+        raise RuntimeError("Python execution is unavailable until a real sandbox is configured")
 
     def _tool_list_directory(self, path: str) -> str:
         try:
-            p = Path(path)
-            if not p.exists():
+            workspace_root = self.skill_manager.workspace_path.resolve()
+            raw = (path or ".").strip() or "."
+            candidate = Path(raw)
+            resolved = (candidate if candidate.is_absolute() else workspace_root / candidate).resolve()
+            if not resolved.is_relative_to(workspace_root):
+                return f"Error: Access denied outside workspace: '{path}'."
+            if not resolved.exists():
                 return f"Error: Directory '{path}' does not exist."
-            items = [f.name + ("/" if f.is_dir() else "") for f in p.iterdir()]
+            if not resolved.is_dir():
+                return f"Error: '{path}' is not a directory."
+            items = [f.name + ("/" if f.is_dir() else "") for f in sorted(resolved.iterdir(), key=lambda x: x.name)]
             return f"Directory contents of '{path}':\n" + "\n".join(items[:50])
         except Exception as e:
             return f"Error listing directory: {e}"

@@ -1,4 +1,4 @@
-//! Bounded OpenAI-compatible HTTP serving.
+//! Bounded OpenAI- and Anthropic-compatible HTTP serving.
 
 use std::{
     io::{Cursor, Read},
@@ -67,6 +67,26 @@ struct ChatCompletionBody {
     seed: Option<u64>,
     stop: Option<StopSequences>,
     n: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AnthropicMessageEntry {
+    role: String,
+    content: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AnthropicMessagesBody {
+    model: Option<String>,
+    messages: Vec<AnthropicMessageEntry>,
+    system: Option<Value>,
+    tools: Option<Value>,
+    #[serde(default)]
+    stream: bool,
+    max_tokens: Option<usize>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    stop_sequences: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -337,7 +357,218 @@ fn handle_request(
                 true,
             )
         }
+        (&Method::Post, "/v1/messages") => {
+            let body: AnthropicMessagesBody = match read_json_body(&mut request) {
+                Ok(body) => body,
+                Err(error) => return respond_error(request, StatusCode(400), &error.to_string()),
+            };
+            if let Err(error) =
+                validate_requested_model(body.model.as_deref(), backend.model_id(), Some(1))
+            {
+                return respond_error(request, StatusCode(400), &error.to_string());
+            }
+            let mut chat_messages = Vec::new();
+            if let Some(sys_val) = body.system {
+                let sys_text = extract_anthropic_content(&sys_val);
+                if !sys_text.is_empty() {
+                    chat_messages.push(ChatMessage {
+                        role: "system".into(),
+                        content: sys_text,
+                    });
+                }
+            }
+            for entry in body.messages {
+                chat_messages.push(ChatMessage {
+                    role: entry.role,
+                    content: extract_anthropic_content(&entry.content),
+                });
+            }
+            if chat_messages.is_empty() {
+                return respond_error(request, StatusCode(400), "messages cannot be empty");
+            }
+            let stop = body.stop_sequences.map(StopSequences::Many);
+            let generation = match generation_config(
+                body.max_tokens,
+                body.temperature,
+                body.top_p,
+                None,
+                stop,
+            ) {
+                Ok(config) => config,
+                Err(error) => return respond_error(request, StatusCode(400), &error.to_string()),
+            };
+            complete_anthropic_request(
+                request,
+                backend,
+                InferenceRequest {
+                    prompt: InferencePrompt::Chat {
+                        messages: chat_messages,
+                        tools: body.tools,
+                    },
+                    generation,
+                },
+                body.stream,
+            )
+        }
         _ => respond_error(request, StatusCode(404), "endpoint not found"),
+    }
+}
+
+fn extract_anthropic_content(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| {
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| block.as_str())
+            })
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
+fn complete_anthropic_request(
+    request: Request,
+    backend: Arc<dyn CompletionBackend>,
+    inference: InferenceRequest,
+    stream: bool,
+) -> Result<(), ServerError> {
+    let id = format!(
+        "msg_sytra_{}_{}",
+        unix_seconds(),
+        REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+    );
+    let model = backend.model_id().to_owned();
+    if stream {
+        let (sender, receiver) = mpsc::sync_channel::<Vec<u8>>(8);
+        let stream_id = id.clone();
+        let stream_model = model.clone();
+        thread::Builder::new()
+            .name("sytra-anthropic-gen".into())
+            .spawn(move || {
+                let start_event = anthropic_sse(
+                    "message_start",
+                    &json!({
+                        "type": "message_start",
+                        "message": {
+                            "id": stream_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "model": stream_model,
+                            "content": [],
+                            "stop_reason": null,
+                            "stop_sequence": null,
+                            "usage": {"input_tokens": 0, "output_tokens": 0}
+                        }
+                    }),
+                );
+                if sender.send(start_event).is_err() {
+                    return;
+                }
+                let block_start = anthropic_sse(
+                    "content_block_start",
+                    &json!({
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "text", "text": ""}
+                    }),
+                );
+                if sender.send(block_start).is_err() {
+                    return;
+                }
+                let mut on_delta = |delta: &str| {
+                    let event = anthropic_sse(
+                        "content_block_delta",
+                        &json!({
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": delta}
+                        }),
+                    );
+                    sender
+                        .send(event)
+                        .map_err(|_| "client disconnected".to_owned())
+                };
+                match backend.complete(inference, &mut on_delta) {
+                    Ok(output) => {
+                        let _ = sender.send(anthropic_sse(
+                            "content_block_stop",
+                            &json!({"type": "content_block_stop", "index": 0}),
+                        ));
+                        let stop_reason = if output.finish_reason == "length" {
+                            "max_tokens"
+                        } else {
+                            "end_turn"
+                        };
+                        let _ = sender.send(anthropic_sse(
+                            "message_delta",
+                            &json!({
+                                "type": "message_delta",
+                                "delta": {"stop_reason": stop_reason, "stop_sequence": null},
+                                "usage": {"output_tokens": output.completion_tokens}
+                            }),
+                        ));
+                        let _ = sender.send(anthropic_sse(
+                            "message_stop",
+                            &json!({"type": "message_stop"}),
+                        ));
+                    }
+                    Err(error) => {
+                        let _ = sender.send(anthropic_sse(
+                            "error",
+                            &json!({
+                                "type": "error",
+                                "error": {"type": "api_error", "message": error.to_string()}
+                            }),
+                        ));
+                    }
+                }
+            })
+            .map_err(|error| ServerError::Http(error.to_string()))?;
+        let response = Response::new(
+            StatusCode(200),
+            vec![content_type("text/event-stream"), no_cache()],
+            ChannelReader::new(receiver),
+            None,
+            None,
+        );
+        request
+            .respond(response)
+            .map_err(|error| ServerError::Http(error.to_string()))
+    } else {
+        let mut discard = |_delta: &str| Ok(());
+        match backend.complete(inference, &mut discard) {
+            Ok(output) => {
+                let stop_reason = if output.finish_reason == "length" {
+                    "max_tokens"
+                } else {
+                    "end_turn"
+                };
+                let response = json!({
+                    "id": id,
+                    "type": "message",
+                    "role": "assistant",
+                    "model": model,
+                    "content": [{
+                        "type": "text",
+                        "text": output.text
+                    }],
+                    "stop_reason": stop_reason,
+                    "stop_sequence": null,
+                    "usage": {
+                        "input_tokens": output.prompt_tokens,
+                        "output_tokens": output.completion_tokens
+                    },
+                    "sytra": {"tokens_per_second": output.tokens_per_second}
+                });
+                respond_json(request, StatusCode(200), &response)
+            }
+            Err(error) => respond_error(request, StatusCode(500), &error.to_string()),
+        }
     }
 }
 
@@ -560,6 +791,10 @@ fn sse_chunk(value: &Value) -> Vec<u8> {
     format!("data: {}\n\n", value).into_bytes()
 }
 
+fn anthropic_sse(event: &str, value: &Value) -> Vec<u8> {
+    format!("event: {event}\ndata: {value}\n\n").into_bytes()
+}
+
 fn unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -725,5 +960,32 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200"));
         assert!(response.contains("data: [DONE]"));
         assert!(response.contains("hello"));
+    }
+
+    #[test]
+    fn anthropic_messages_endpoint_returns_valid_message_object() {
+        let server = Server::http("127.0.0.1:0").unwrap();
+        let address = server.server_addr().to_ip().unwrap();
+        let handler = thread::spawn(move || {
+            let request = server.recv().unwrap();
+            handle_request(request, Arc::new(MockBackend)).unwrap();
+        });
+        let body = r#"{"model":"mock-moe","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#;
+        let mut socket = TcpStream::connect(address).unwrap();
+        write!(
+            socket,
+            "POST /v1/messages HTTP/1.0\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+        socket.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).unwrap();
+        handler.join().unwrap();
+        assert!(response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200"));
+        assert!(response.contains("\"type\":\"message\""));
+        assert!(response.contains("\"text\":\"hello\""));
+        assert!(response.contains("\"stop_reason\":\"end_turn\""));
     }
 }

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from sytra_runner.runtime_detect import (
     extra_runtime_roots,
-    find_colibri,
     find_llama_server,
     find_lm_studio,
     find_ollama,
@@ -59,37 +58,26 @@ def test_find_sytra_engine_in_target_build_debug(tmp_path, monkeypatch):
     assert found == [str(exe.resolve())]
 
 
-def test_find_colibri_in_tools_and_home_env(tmp_path, monkeypatch):
-    monkeypatch.delenv("SYTRA_COLIBRI_COMMAND", raising=False)
-    home = tmp_path / "colibri-home"
-    exe = home / "coli.exe"
+def test_find_sytra_engine_in_target_release(tmp_path, monkeypatch):
+    monkeypatch.delenv("SYTRA_ENGINE_COMMAND", raising=False)
+    monkeypatch.delenv("SYTRA_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("SYTRA_WORKSPACE", raising=False)
+    exe = tmp_path / "target" / "release" / "sytra-engine.exe"
     exe.parent.mkdir(parents=True)
-    exe.write_bytes(b"MZ")
-    monkeypatch.setenv("SYTRA_COLIBRI_HOME", str(home))
-    found = find_colibri(tmp_path)
+    exe.write_bytes(b"fake")
+    found = find_sytra_engine(tmp_path)
     assert found == [str(exe.resolve())]
 
 
-def test_find_colibri_wraps_python_launcher(tmp_path, monkeypatch):
-    monkeypatch.delenv("SYTRA_COLIBRI_COMMAND", raising=False)
-    monkeypatch.delenv("SYTRA_COLIBRI_HOME", raising=False)
-    monkeypatch.setattr("sytra_runner.runtime_detect.shutil.which", lambda name: None)
-    monkeypatch.setattr(
-        "sytra_runner.runtime_detect.project_roots",
-        lambda project_root=None: [tmp_path],
-    )
-    script = tmp_path / ".tools" / "colibri" / "coli"
-    script.parent.mkdir(parents=True)
-    script.write_text("#!/usr/bin/env python3\nprint('coli')\n", encoding="utf-8")
-    found = find_colibri(tmp_path)
-    assert found is not None
-    assert found[-1] == str(script.resolve())
-    assert found[0].lower().endswith("python.exe") or "python" in Path(found[0]).name.lower()
+def test_find_sytra_engine_honors_command_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("SYTRA_ENGINE_COMMAND", "custom-sytra-engine --fast")
+    found = find_sytra_engine(tmp_path)
+    assert found == ["custom-sytra-engine", "--fast"]
 
 
-def test_prepend_runtime_path_uses_coli_dir_not_python(tmp_path, monkeypatch):
+def test_prepend_runtime_path_uses_script_dir_not_python(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", "C:\\Windows\\System32")
-    script = tmp_path / "coli"
+    script = tmp_path / "sytra-launcher"
     script.write_text("print('x')\n", encoding="utf-8")
     env = prepend_runtime_path(
         {"PATH": "C:\\Windows\\System32"},

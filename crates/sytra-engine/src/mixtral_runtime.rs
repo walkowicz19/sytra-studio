@@ -101,10 +101,9 @@ impl MixtralRuntime {
                 memory.host_staging_bytes
             )));
         }
-        let accelerator_expert_cache = if matches!(
-            manifest.architecture.expert_format,
-            crate::WeightFormat::Bf16 | crate::WeightFormat::PackedInt4Group32
-        ) {
+        let accelerator_expert_cache = if manifest.architecture.expert_format == crate::WeightFormat::Bf16
+            || manifest.architecture.expert_format.is_packed_int4()
+        {
             options
                 .accelerator_expert_cache_bytes
                 .unwrap_or(memory.accelerator_cache_bytes)
@@ -124,6 +123,18 @@ impl MixtralRuntime {
             accelerator_expert_cache,
             cuda_limit,
         ));
+        if let Some(cuda_ref) = &cuda {
+            if memory.accelerator_dense_execution && dense_tile_bytes > 0 {
+                let _ = cuda_ref.reserve_scratch(dense_tile_bytes as usize);
+            }
+            let residency_weak = Arc::downgrade(&residency);
+            cuda_ref.set_reclaimer(Arc::new(move || {
+                residency_weak
+                    .upgrade()
+                    .map(|manager| manager.evict_device_fraction(4))
+                    .unwrap_or(0)
+            }));
+        }
         let scheduler = StreamingScheduler::with_inflight_budget(residency.clone(), 0, max_expert)
             .map_err(execution)?;
         let dense = DenseTensorStore::with_budgets(
@@ -278,6 +289,7 @@ impl MixtralRuntime {
         &self,
         execute: impl FnOnce(&MixtralExecutor<'_>) -> Result<T, MixtralError>,
     ) -> Result<T, RuntimeError> {
+        let packed_group_size = self.manifest.architecture.packed_group_size().unwrap_or(32);
         let executor = MixtralExecutor::new(
             &self.config,
             &self.dense,
@@ -285,7 +297,8 @@ impl MixtralRuntime {
             self.cuda.as_deref(),
             self.dense_tile_bytes,
         )
-        .map_err(execution)?;
+        .map_err(execution)?
+        .with_packed_group_size(packed_group_size);
         execute(&executor).map_err(execution)
     }
 }

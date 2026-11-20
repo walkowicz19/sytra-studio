@@ -1,0 +1,34 @@
+{
+  "name": "cloud-agent",
+  "version": "0.0.0",
+  "type": "module",
+  "imports": {
+    "#*": "./agent/*",
+    "#evals/*": "./evals/*"
+  },
+  "scripts": {
+    "build": "eve build",
+    "deploy": "eve deploy",
+    "dev": "eve dev",
+    "eval": "eve eval",
+    "start": "eve start",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@vercel/connect": "2.7.0",
+    "@vercel/sandbox": "4.1.0",
+    "ai": "^7.0.172",
+    "eve": "^1.2.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.x",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "@vercel/cli-config": { "zod": "4.6.7" }
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

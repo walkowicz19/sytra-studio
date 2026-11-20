@@ -5,6 +5,9 @@
  * then to the key itself (visible in dev, never a crash).
  */
 
+import { chatMessages } from './i18n/chat'
+import { datasetMessages } from './i18n/datasets'
+
 export type Locale = 'en' | 'pt' | 'es' | 'zh' | 'pl'
 
 export const LOCALES: { id: Locale; label: string }[] = [
@@ -26,10 +29,13 @@ function detectLocale(): Locale {
   return 'en'
 }
 
-export const localeStore = $state<{ current: Locale }>({ current: detectLocale() })
+const initialLocale = detectLocale()
+document.documentElement.lang = initialLocale
+export const localeStore = $state<{ current: Locale }>({ current: initialLocale })
 
 export function setLocale(l: Locale) {
   localeStore.current = l
+  document.documentElement.lang = l
   localStorage.setItem('sytra-locale', l)
 }
 
@@ -162,9 +168,14 @@ const en: Dict = {
   'models.nativeAdapter': 'Native architecture adapter',
   'models.expertFormat': 'Expert weight format',
   'models.buildNativeIndex': 'Build expert index',
-  'models.nativeIndexing': 'Reading SafeTensors headersâ€¦',
+  'models.nativeIndexing': 'Reading SafeTensors headers…',
   'models.nativeIndexReady': 'Native index created. Experts indexed:',
   'models.nativeIndexHint': 'Creates byte-range metadata without copying weights. Serving remains blocked until this exact adapter has a token-verified kernel.',
+  'models.generateOracle': 'Generate Oracle',
+  'models.generatingOracle': 'Generating Oracle…',
+  'models.oracleReady': 'Verification oracle generated:',
+  'models.allowUnverified': 'Allow unverified checkpoint',
+  'models.allowUnverifiedHint': 'Allows Helix inference without .sytra-oracle.json.',
   'models.inspectPlan': 'Inspect plan',
   'models.exportRuntimes': 'Export Ollama / LM Studio',
   'models.planCompatible': 'Fits this machine',
@@ -284,6 +295,14 @@ const en: Dict = {
   'combine.goal.blendHint': 'A smooth 50/50 mix of exactly two models',
   'combine.goal.specialize': 'Add a specialty',
   'combine.goal.specializeHint': 'Keep the first model as the base, add what the others learned',
+  'combine.step3.title': 'Performance',
+  'combine.step3.sub': 'Choose how Sytra balances speed and memory while merging.',
+  'combine.perf.auto': 'Auto',
+  'combine.perf.autoHint': 'Balanced speed and memory for this machine',
+  'combine.perf.safe': 'Safe — low memory',
+  'combine.perf.safeHint': 'Uses less memory on tighter GPUs or system RAM',
+  'combine.perf.fast': 'Fast',
+  'combine.perf.fastHint': 'Prioritizes merge speed when plenty of memory is free',
   'combine.compatible': 'These models are compatible.',
   'combine.mayWork': 'it may still work.',
   'combine.start': 'Combine models',
@@ -467,13 +486,19 @@ const pt: Dict = {
   'models.serverStarting': 'Validando…',
   'models.startServer': 'Iniciar Servidor',
   'models.stopServer': 'Parar',
-  'models.nativeMoeIndex': 'Ãndice MoE nativo',
+  'models.nativeMoeIndex': 'Índice MoE nativo',
   'models.nativeAdapter': 'Adaptador de arquitetura nativo',
   'models.expertFormat': 'Formato dos pesos dos especialistas',
-  'models.buildNativeIndex': 'Criar Ã­ndice de especialistas',
-  'models.nativeIndexing': 'Lendo cabeÃ§alhos SafeTensorsâ€¦',
-  'models.nativeIndexReady': 'Ãndice nativo criado. Especialistas indexados:',
-  'models.nativeIndexHint': 'Cria metadados de faixas de bytes sem copiar pesos. O servidor permanece bloqueado atÃ© este adaptador exato ter um kernel validado por tokens.',
+  'models.buildNativeIndex': 'Criar índice de especialistas',
+  'models.nativeIndexing': 'Lendo cabeçalhos SafeTensors…',
+  'models.nativeIndexReady': 'Índice nativo criado. Especialistas indexados:',
+  'models.nativeIndexHint': 'Cria metadados de faixas de bytes sem copiar pesos. O servidor permanece bloqueado até este adaptador exato ter um kernel validado por tokens.',
+
+  'models.generateOracle': 'Gerar Oracle',
+  'models.generatingOracle': 'Gerando Oracle…',
+  'models.oracleReady': 'Oracle de verificação gerado:',
+  'models.allowUnverified': 'Permitir checkpoint não verificado',
+  'models.allowUnverifiedHint': 'Permite inferência Helix sem .sytra-oracle.json.',
 
   // Visual Studio Customizer
   'vs.title': 'Estúdio Visual',
@@ -584,6 +609,14 @@ const pt: Dict = {
   'combine.goal.blendHint': 'Uma mistura suave 50/50 de exatamente dois modelos',
   'combine.goal.specialize': 'Adicionar uma especialidade',
   'combine.goal.specializeHint': 'Mantenha o primeiro modelo como base e adicione o que os outros aprenderam',
+  'combine.step3.title': 'Desempenho',
+  'combine.step3.sub': 'Escolha como o Sytra equilibra velocidade e memória durante a mesclagem.',
+  'combine.perf.auto': 'Automático',
+  'combine.perf.autoHint': 'Velocidade e memória equilibradas para este computador',
+  'combine.perf.safe': 'Seguro — pouca memória',
+  'combine.perf.safeHint': 'Reduz o uso de memória em GPUs ou RAM menores',
+  'combine.perf.fast': 'Rápido',
+  'combine.perf.fastHint': 'Prioriza velocidade quando há bastante memória livre',
   'combine.compatible': 'Estes modelos são compatíveis.',
   'combine.mayWork': 'ainda pode funcionar.',
   'combine.start': 'Combinar modelos',
@@ -712,6 +745,14 @@ const es: Dict = {
   'combine.goal.blendHint': 'Una mezcla suave 50/50 de exactamente dos modelos',
   'combine.goal.specialize': 'Añadir una especialidad',
   'combine.goal.specializeHint': 'Mantén el primer modelo como base y añade lo que aprendieron los otros',
+  'combine.step3.title': 'Rendimiento',
+  'combine.step3.sub': 'Elige cómo equilibrar velocidad y memoria al fusionar.',
+  'combine.perf.auto': 'Automático',
+  'combine.perf.autoHint': 'Velocidad y memoria equilibradas para este equipo',
+  'combine.perf.safe': 'Seguro — poca memoria',
+  'combine.perf.safeHint': 'Reduce el uso de memoria en GPUs o RAM limitadas',
+  'combine.perf.fast': 'Rápido',
+  'combine.perf.fastHint': 'Prioriza la velocidad cuando hay memoria libre',
   'combine.compatible': 'Estos modelos son compatibles.',
   'combine.mayWork': 'aún puede funcionar.',
   'combine.start': 'Combinar modelos',
@@ -840,6 +881,14 @@ const zh: Dict = {
   'combine.goal.blendHint': '恰好两个模型的 50/50 平滑混合',
   'combine.goal.specialize': '添加一项特长',
   'combine.goal.specializeHint': '以第一个模型为基础，加入其他模型学到的能力',
+  'combine.step3.title': '性能模式',
+  'combine.step3.sub': '选择合并时如何平衡速度与内存占用。',
+  'combine.perf.auto': '自动',
+  'combine.perf.autoHint': '根据当前机器平衡速度与内存',
+  'combine.perf.safe': '安全 — 低内存',
+  'combine.perf.safeHint': '在显存或内存较紧张时降低峰值占用',
+  'combine.perf.fast': '快速',
+  'combine.perf.fastHint': '内存充足时优先追求合并速度',
   'combine.compatible': '这些模型相互兼容。',
   'combine.mayWork': '仍可能有效。',
   'combine.start': '合并模型',
@@ -968,6 +1017,14 @@ const pl: Dict = {
   'combine.goal.blendHint': 'Gładka mieszanka 50/50 dokładnie dwóch modeli',
   'combine.goal.specialize': 'Dodaj specjalizację',
   'combine.goal.specializeHint': 'Zachowaj pierwszy model jako bazę i dodaj to, czego nauczyły się pozostałe',
+  'combine.step3.title': 'Wydajność',
+  'combine.step3.sub': 'Wybierz, jak Sytra równoważy szybkość i pamięć podczas scalania.',
+  'combine.perf.auto': 'Automatycznie',
+  'combine.perf.autoHint': 'Zrównoważona szybkość i pamięć dla tego komputera',
+  'combine.perf.safe': 'Bezpieczny — mało pamięci',
+  'combine.perf.safeHint': 'Mniejsze zużycie pamięci przy ograniczonej GPU lub RAM',
+  'combine.perf.fast': 'Szybki',
+  'combine.perf.fastHint': 'Priorytet szybkości, gdy jest dużo wolnej pamięci',
   'combine.compatible': 'Te modele są kompatybilne.',
   'combine.mayWork': 'może nadal zadziałać.',
   'combine.start': 'Połącz modele',
@@ -1029,14 +1086,22 @@ const pl: Dict = {
 }
 
 const dictionaries: Record<Locale, Dict> = { en, pt, es, zh, pl }
+const localeIndex: Record<Locale, number> = { en: 0, pt: 1, es: 2, zh: 3, pl: 4 }
+const featureMessages: Record<string, Record<string, readonly string[]>> = {
+  chat: chatMessages,
+  datasets: datasetMessages,
+  nav: { chat: chatMessages.nav, datasets: datasetMessages.title },
+}
 
 /** Translate a key; `params` fills `{placeholders}`. */
 export function t(key: string, params?: Record<string, string | number>): string {
-  const dict = dictionaries[localeStore.current]
-  let text = dict[key] ?? en[key] ?? key
+  const locale = localeStore.current
+  const separator = key.indexOf('.')
+  const featureCopy = featureMessages[key.slice(0, separator)]?.[key.slice(separator + 1)]
+  let text = featureCopy?.[localeIndex[locale]] ?? dictionaries[locale][key] ?? en[key] ?? key
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      text = text.replaceAll(`{${k}}`, String(v))
+      text = text.replaceAll(`{${k}}`, () => String(v))
     }
   }
   return text

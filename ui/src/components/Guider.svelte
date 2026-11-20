@@ -24,7 +24,7 @@
   let allowQualityLoss = $state(false)
 
   // Merge advisor inputs
-  let advisorModels = $state('org/knowledge-ft, org/toolcalling-ft')
+  let advisorModels = $state('mistralai/Mistral-7B-Instruct-v0.3, HuggingFaceH4/zephyr-7b-beta')
   let advisorGoal = $state<'knowledge' | 'behavior' | 'interpolation' | 'architecture'>('knowledge')
   let checking = $state(false)
   let compatResult = $state<CompatResult | null>(null)

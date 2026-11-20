@@ -32,18 +32,18 @@ fn test_guider_and_resource_guard() {
     // Test merge check (green case)
     let comp_green = guider.merge_check(
         &[
-            "org/knowledge-ft".to_string(),
-            "org/toolcalling-ft".to_string(),
+            "Qwen/Qwen2.5-7B-Instruct".to_string(),
+            "Qwen/Qwen2.5-7B-Instruct-GGUF".to_string(),
         ],
         MergeMethod::DareTies,
     );
     assert_eq!(comp_green.verdict, Verdict::Green);
 
-    // Test merge check (amber tokenizer mismatch - let's simulate by matching Mistral with Llama 3)
+    // Test merge check (amber tokenizer mismatch between Mistral v0.1 and v0.3)
     let comp_amber = guider.merge_check(
         &[
             "mistralai/Mistral-7B-v0.1".to_string(),
-            "mlx-community/Meta-Llama-3-8B-Instruct-4bit".to_string(),
+            "mistralai/Mistral-7B-Instruct-v0.3".to_string(),
         ],
         MergeMethod::Moe,
     );
@@ -55,12 +55,15 @@ fn test_guider_and_resource_guard() {
     // Construct dummy TrainSpec
     let train_spec = TrainSpec {
         config: RunConfig {
+            train_dataset: None,
+            val_dataset: None,
+            init_adapter: None, performance: Default::default(),
             version: 1,
             run_id: None,
             train_mode: TrainMode::Sft,
             model: "mistralai/Mistral-7B-v0.1".to_string(),
             backend: BackendConfig {
-                kind: BackendKind::Cpu,
+                kind: BackendKind::Cuda,
                 judge_model: None,
             },
             data: DataSpec::Hf {
@@ -74,6 +77,8 @@ fn test_guider_and_resource_guard() {
                 },
             },
             adapter: AdapterConfig {
+                use_rslora: false,
+                moe_topology: "attention".into(),
                 kind: AdapterType::Lora,
                 rank: 16,
                 alpha: 32,
@@ -82,6 +87,8 @@ fn test_guider_and_resource_guard() {
                 quant_bits: None,
             },
             optim: OptimConfig {
+                router_lr_ratio: None,
+                router_aux_coef: None,
                 learning_rate: 2e-4,
                 schedule: Schedule::Cosine,
                 warmup_steps: 20,
@@ -89,12 +96,13 @@ fn test_guider_and_resource_guard() {
                 grad_accumulation_steps: 8,
             },
             train: TrainParams {
+                neftune_noise_alpha: None,
                 max_steps: Some(10),
                 epochs: None,
                 batch_size: 2,
                 max_seq_len: 2048,
                 save_every: 2,
-                packing: false,
+                packing: sytra_contracts::run_config::Packing::Enabled(false),
             },
             algo: Default::default(),
             output: RunOutput {

@@ -27,12 +27,9 @@ impl HfDataSource {
         repo_id: &str,
         split: &str,
     ) -> Option<String> {
-        let url = format!(
-            "https://datasets-server.huggingface.co/splits?dataset={}",
-            repo_id
-        );
         let resp = client
-            .get(&url)
+            .get("https://datasets-server.huggingface.co/splits")
+            .query(&[("dataset", repo_id)])
             .header("User-Agent", "SytraStudio/0.1.0")
             .send()
             .await
@@ -81,19 +78,21 @@ impl HfDataSource {
             }
         }
 
-        let mut url = format!(
-            "https://datasets-server.huggingface.co/rows?dataset={}&split={}&offset=0&limit={}",
-            repo_id, split, limit
-        );
+        let mut query_params = vec![
+            ("dataset", repo_id.to_string()),
+            ("split", split.to_string()),
+            ("offset", "0".to_string()),
+            ("limit", limit.to_string()),
+        ];
         if let Some(ref cfg) = resolved_config {
             if !cfg.trim().is_empty() {
-                url = format!("{}&config={}", url, cfg);
+                query_params.push(("config", cfg.clone()));
             }
         }
-        eprintln!("HF Query URL: {}", url);
 
         let resp = client
-            .get(&url)
+            .get("https://datasets-server.huggingface.co/rows")
+            .query(&query_params)
             .header("User-Agent", "SytraStudio/0.1.0")
             .send()
             .await
@@ -191,12 +190,15 @@ impl DataSource for HfDataSource {
         .await?;
         std::fs::create_dir_all(out_dir)?;
         let jsonl_path = out_dir.join("data.jsonl");
-        let body = rows
-            .iter()
-            .map(|r| r.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        std::fs::write(&jsonl_path, body)?;
+        let file = std::fs::File::create(&jsonl_path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        use std::io::Write;
+        for row in &rows {
+            serde_json::to_writer(&mut writer, row)
+                .map_err(|e| DataSourceError::InvalidSpec(e.to_string()))?;
+            writer.write_all(b"\n")?;
+        }
+        writer.flush()?;
         Ok(Materialized {
             jsonl_path,
             fingerprint: self.fingerprint(spec)?,

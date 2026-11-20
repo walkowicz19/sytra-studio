@@ -28,6 +28,10 @@ pub enum ModelFamily {
     GlmMoe,
     KimiK3,
     Inkling,
+    Grok,
+    Llama4Moe,
+    ErnieMoe,
+    JambaMoe,
     /// Storage/index support for an unrecognized discrete-expert model. It
     /// can be inspected and benchmarked but never unlocks token serving.
     #[default]
@@ -166,11 +170,20 @@ pub enum WeightFormat {
     Int4Group,
     /// compressed-tensors `pack-quantized`, symmetric INT4, group size 32.
     PackedInt4Group32,
+    /// compressed-tensors `pack-quantized`, symmetric INT4 with explicit group size (32/64/128/256).
+    #[serde(rename = "packed_int4_group", alias = "packed_int4")]
+    PackedInt4Group,
     Fp8E4m3,
     Nvfp4,
     Mxfp4,
     Gguf,
     Custom,
+}
+
+impl WeightFormat {
+    pub fn is_packed_int4(&self) -> bool {
+        matches!(self, Self::PackedInt4Group32 | Self::PackedInt4Group)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -207,6 +220,58 @@ pub struct ArchitectureContract {
     /// Must be true only after reference-logit/token tests pass.
     #[serde(default)]
     pub forward_verified: bool,
+}
+
+impl ArchitectureContract {
+    pub fn packed_group_size(&self) -> Option<usize> {
+        if !self.expert_format.is_packed_int4() {
+            return None;
+        }
+        let group_size = if self.expert_format == WeightFormat::PackedInt4Group32
+            && self.quantization.group_size == 0
+        {
+            32
+        } else {
+            self.quantization.group_size as usize
+        };
+        if self.expert_format == WeightFormat::PackedInt4Group32 && group_size != 32 {
+            return None;
+        }
+        matches!(group_size, 32 | 64 | 128 | 256).then_some(group_size)
+    }
+}
+
+pub(crate) fn validate_packed_shape_segment(
+    dtype: Option<&str>,
+    shape: &[u64],
+    length: u64,
+) -> bool {
+    shape == [2]
+        && ((dtype == Some("I32") && length == 8) || (dtype == Some("I64") && length == 16))
+}
+
+pub(crate) fn decode_packed_shape(
+    dtype: Option<&str>,
+    bytes: &[u8],
+) -> Result<(usize, usize), String> {
+    let (rows, cols) = match (dtype, bytes.len()) {
+        (Some("I32"), 8) => (
+            i64::from(i32::from_le_bytes(
+                bytes[0..4].try_into().expect("validated shape bytes"),
+            )),
+            i64::from(i32::from_le_bytes(
+                bytes[4..8].try_into().expect("validated shape bytes"),
+            )),
+        ),
+        (Some("I64"), 16) => (
+            i64::from_le_bytes(bytes[0..8].try_into().expect("validated shape bytes")),
+            i64::from_le_bytes(bytes[8..16].try_into().expect("validated shape bytes")),
+        ),
+        _ => return Err("weight_shape must be I32 [2] or I64 [2]".into()),
+    };
+    let rows = usize::try_from(rows).map_err(|_| "weight_shape has non-positive rows".to_string())?;
+    let cols = usize::try_from(cols).map_err(|_| "weight_shape has non-positive cols".to_string())?;
+    Ok((rows, cols))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

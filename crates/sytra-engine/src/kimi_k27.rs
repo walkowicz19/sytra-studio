@@ -464,17 +464,23 @@ pub fn int4_group_matvec(
 }
 
 /// Byte-exact CPU reference for compressed-tensors symmetric packed INT4
-/// group-32 weights with BF16 scales and a position-major FP32 input batch.
-pub fn int4_group32_bf16_matmul_cpu(
+/// groupwise weights with BF16 scales and a position-major FP32 input batch.
+pub fn int4_group_bf16_matmul_cpu(
     packed: &[u8],
     scales: &[u8],
     rows: usize,
     cols: usize,
+    group_size: usize,
     positions: usize,
     input: &[f32],
 ) -> Result<Vec<f32>, KimiError> {
+    if rows == 0 || cols == 0 || group_size == 0 || positions == 0 || !cols.is_multiple_of(group_size) {
+        return Err(KimiError::Shape(
+            "invalid packed INT4/BF16 batched matrix dimensions".into(),
+        ));
+    }
     let words_per_row = cols.div_ceil(8);
-    let groups_per_row = cols / 32;
+    let groups_per_row = cols / group_size;
     let packed_len = rows
         .checked_mul(words_per_row)
         .and_then(|words| words.checked_mul(size_of::<u32>()))
@@ -483,11 +489,7 @@ pub fn int4_group32_bf16_matmul_cpu(
         .checked_mul(groups_per_row)
         .and_then(|values| values.checked_mul(size_of::<u16>()))
         .ok_or_else(|| KimiError::Shape("packed INT4 scale size overflow".into()))?;
-    if rows == 0
-        || cols == 0
-        || positions == 0
-        || !cols.is_multiple_of(32)
-        || input.len() != positions * cols
+    if input.len() != positions * cols
         || packed.len() != packed_len
         || scales.len() != scale_len
     {
@@ -508,7 +510,7 @@ pub fn int4_group32_bf16_matmul_cpu(
                         .expect("validated packed word range"),
                 );
                 let nibble = (word >> ((column % 8) * 4)) & 0x0f;
-                let scale_offset = (row * groups_per_row + column / 32) * size_of::<u16>();
+                let scale_offset = (row * groups_per_row + column / group_size) * size_of::<u16>();
                 let scale = bf16_to_f32(u16::from_le_bytes(
                     scales[scale_offset..scale_offset + size_of::<u16>()]
                         .try_into()
@@ -520,6 +522,19 @@ pub fn int4_group32_bf16_matmul_cpu(
         }
     }
     Ok(output)
+}
+
+/// Byte-exact CPU reference for compressed-tensors symmetric packed INT4
+/// group-32 weights with BF16 scales and a position-major FP32 input batch.
+pub fn int4_group32_bf16_matmul_cpu(
+    packed: &[u8],
+    scales: &[u8],
+    rows: usize,
+    cols: usize,
+    positions: usize,
+    input: &[f32],
+) -> Result<Vec<f32>, KimiError> {
+    int4_group_bf16_matmul_cpu(packed, scales, rows, cols, 32, positions, input)
 }
 
 pub struct PackedInt4Matrix<'a> {

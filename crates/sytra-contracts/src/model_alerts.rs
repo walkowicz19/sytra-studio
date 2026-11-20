@@ -130,11 +130,15 @@ pub fn alerts_for(
         || arch_l.contains("qwen3.5")
         || id_l.contains("qwen3.5")
         || name_l.contains("qwen3.5")
+        || id_l.contains("qwen3.8")
+        || name_l.contains("qwen3.8")
+        || id_l.contains("qwen3.6")
+        || id_l.contains("qwen3.7")
     {
         alerts.push(ModelAlert {
             level: "danger".into(),
             code: "never_qwen2".into(),
-            message: "This is Qwen3.5, not Qwen2. Serving or training it as Qwen2 will load the wrong kernel and corrupt LoRA matches.".into(),
+            message: "This is a Qwen3.5-family hybrid (3.5/3.6/3.7/3.8), not Qwen2. Serving or training it as Qwen2 will load the wrong kernel and corrupt LoRA matches.".into(),
             blocks_download: false,
         });
         if entry.use_case_tags.iter().any(|t| t == "multimodal" || t == "vision")
@@ -143,7 +147,7 @@ pub fn alerts_for(
             alerts.push(ModelAlert {
                 level: "warning".into(),
                 code: "vision_not_text_lora".into(),
-                message: "Qwen3.5 multimodal weights include vision tensors. Sytra text LoRA must target q/k/v/o only; vision modules must stay unmatched.".into(),
+                message: "Qwen3.5-family multimodal weights include vision tensors. Sytra text LoRA must not match vision modules; hybrid DeltaNet layers need in_proj_qkv/in_proj_z/out_proj, not q/k/v/o alone.".into(),
                 blocks_download: false,
             });
         }
@@ -172,15 +176,28 @@ pub fn alerts_for(
     if let Some(vram) = vram_mb {
         let vram_gb = vram as f64 / 1024.0;
         if download_gb > vram_gb * 0.85 && format != "gguf" {
-            alerts.push(ModelAlert {
-                level: "danger".into(),
-                code: "exceeds_vram".into(),
-                message: format!(
-                    "Estimated {:.1} GB weights exceed ~{:.0} GB VRAM. Fine-tuning this checkpoint on this GPU will OOM without a much smaller quant or a smaller model.",
-                    download_gb, vram_gb
-                ),
-                blocks_download: false,
-            });
+            let est_4bit_gb = download_gb * 0.30;
+            if est_4bit_gb <= vram_gb * 0.85 {
+                alerts.push(ModelAlert {
+                    level: "warning".into(),
+                    code: "exceeds_vram".into(),
+                    message: format!(
+                        "Full weights (~{:.1} GB) exceed ~{:.0} GB VRAM; use 4-bit quantization or RAM offload.",
+                        download_gb, vram_gb
+                    ),
+                    blocks_download: false,
+                });
+            } else {
+                alerts.push(ModelAlert {
+                    level: "danger".into(),
+                    code: "exceeds_vram".into(),
+                    message: format!(
+                        "Estimated {:.1} GB weights exceed ~{:.0} GB VRAM. Fine-tuning or loading without heavy quant/streaming will OOM.",
+                        download_gb, vram_gb
+                    ),
+                    blocks_download: false,
+                });
+            }
         } else if format == "gguf" && download_gb > vram_gb + 2.0 {
             if let Some(ram) = ram_mb {
                 let ram_gb = ram as f64 / 1024.0;

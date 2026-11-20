@@ -233,3 +233,58 @@ def try_read_gguf_metadata(path: str | Path) -> GgufMetadata | None:
         return read_gguf_metadata(path)
     except (OSError, GgufMetadataError, struct.error, IndexError):
         return None
+
+
+def read_gguf_layer_sizes(path: str | Path, n_layer: int) -> tuple[list[int], list[int]] | None:
+    """Tensor byte spans for layer and expert placement, without reading weights.
+
+    Include alignment padding in each span. Unknown/split layouts cannot safely
+    justify expert offload and return None instead of estimating from active params.
+    """
+    import re
+    try:
+        with Path(path).open("rb") as handle:
+            if handle.read(4) != GGUF_MAGIC or _read_u32(handle) not in (2, 3):
+                return None
+            count, kv_count = _read_u64(handle), _read_u64(handle)
+            if not 0 < count < 1_000_000 or kv_count > 100_000:
+                return None
+            alignment = 32
+            for _ in range(kv_count):
+                key = _read_string(handle)
+                value = _read_value(handle, _read_u32(handle))
+                if key == "split.count" and value > 1:
+                    return None
+                if key == "general.alignment":
+                    alignment = value
+            if type(alignment) is not int or alignment <= 0 or alignment > 1024**2:
+                return None
+            tensors = []
+            for _ in range(count):
+                name = _read_string(handle)
+                dims = _read_u32(handle)
+                if not 0 < dims <= 4:
+                    return None
+                for _ in range(dims):
+                    _read_u64(handle)
+                _read_u32(handle)  # Quant type; byte spans already include quant overhead.
+                tensors.append((_read_u64(handle), name))
+            start = (handle.tell() + alignment - 1) // alignment * alignment
+            data_size = Path(path).stat().st_size - start
+        tensors.sort()
+        layers, experts = [0] * n_layer, [0] * n_layer
+        for index, (offset, name) in enumerate(tensors):
+            end = tensors[index + 1][0] if index + 1 < len(tensors) else data_size
+            if offset < 0 or end <= offset or end > data_size:
+                return None
+            match = re.match(r"blk\.(\d+)\.", name)
+            if match:
+                layer = int(match[1])
+                if layer >= n_layer:
+                    return None
+                layers[layer] += end - offset
+                if re.search(r"ffn_(gate|up|down).*_exps", name):
+                    experts[layer] += end - offset
+        return (layers, experts) if all(layers) else None
+    except (OSError, GgufMetadataError, struct.error, IndexError, TypeError):
+        return None

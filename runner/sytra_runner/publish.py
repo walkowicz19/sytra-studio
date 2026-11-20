@@ -104,7 +104,7 @@ def main():
     artifact_path = args.artifact_path
     repo_id = args.repo_id
     is_private = args.private.lower() == "true"
-    token = args.token
+    token = args.token or os.environ.get("HF_TOKEN", "")
     
     emit_log(f"Initializing HF upload for {artifact_path} to {repo_id}...")
     

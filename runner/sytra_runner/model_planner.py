@@ -1,22 +1,25 @@
 """Capability-gated local inference backend planning.
 
-Sytra does not implement model kernels here. It verifies the local artifact and
-launches a mature OpenAI-compatible server:
+Sytra verifies the local artifact and launches an OpenAI- and Anthropic-compatible
+inference server:
 
 * llama.cpp for GGUF and CPU/GPU hybrid inference.
 * vLLM for complete Hugging Face/Safetensors checkpoints that fit GPU memory
   or a conservative GPU+RAM UVA-offload budget.
-* Sytra's native runtime for explicitly indexed, architecture-validated
-  VRAM/RAM/NVMe MoE containers.
-* Colibri (`coli serve --auto-tier`) for frontier disk-streamed MoE (GLM-5.2,
-  Kimi K3, Inkling, OLMoE safetensors). Sytra unpacks a pinned `coli` release
-  into `.tools/colibri` on that path when the launcher is missing.
+* Sytra-Helix MoE Engine v2 (`sytra_moe` / `sytra-engine`) for explicitly indexed
+  or architecture-verified MoE checkpoints across 4GB, 8GB, 12GB, 16GB+ VRAM and
+  CPU-only hosts, combining FreeToken (3-stream STW + frequency LRU),
+  ktransformers (GPU Attention + CPU AVX-512/AMX expert co-execution),
+  Colibri-tier Direct NVMe streaming, MoE-Infinity (predictive lookahead),
+  AirLLM (layer windowing anti-OOM), and Strata (N-gram trie + MTP speculation)
+  for models from 7B to 744B+ parameters.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -32,24 +35,12 @@ from .architecture_adapters import (
     resolve_architecture_adapter,
     validate_adapter_payload,
 )
-from .gguf_meta import try_read_gguf_metadata
-from .colibri_bridge import (
-    COLIBRI_PREFERRED_FAMILIES,
-    COLIBRI_STREAMING_FLOOR_TPS,
-    build_colibri_preflight_command,
-    build_colibri_serve_command,
-    colibri_install_hint,
-    colibri_model_id,
-    colibri_resource_plan,
-    detect_colibri_family,
+from .gguf_meta import read_gguf_layer_sizes, try_read_gguf_metadata
+from .helix_engine import (
+    HELIX_STREAMING_FLOOR_TPS,
+    build_helix_resource_plan,
 )
-from .colibri_provision import maybe_provision_colibri
-from .runtime_detect import (
-    find_colibri,
-    find_llama_server,
-    find_sytra_engine,
-    llama_server_provision_hint,
-)
+from .subprocess_utils import silent_subprocess_kwargs
 from .memory_hierarchy import (
     KVCachePlan,
     LlamaCppOffloadPlan,
@@ -59,8 +50,28 @@ from .memory_hierarchy import (
     plan_llama_cpp_offload,
     plan_weight_placement,
 )
+from .runtime_detect import (
+    find_llama_server,
+    find_sytra_engine,
+    llama_server_provision_hint,
+    prepend_runtime_path,
+)
 
-BackendName = Literal["llama_cpp", "vllm", "sytra_moe", "colibri"]
+BackendName = Literal["llama_cpp", "vllm", "sytra_moe"]
+
+_SUPPORTED_KV_QUANTS = {
+    "fp16", "f16", "float16", "bf16", "bfloat16",
+    "q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "iq4_nl",
+    "f32", "fp32", "float32", "auto", "fp8", "float8",
+}
+_QUANTIZED_KV_QUANTS = {"q8_0", "q4_0", "q4_1", "q5_0", "q5_1", "iq4_nl"}
+_LLAMA_KV_TYPE_MAP = {
+    "fp16": "f16",
+    "float16": "f16",
+    "fp32": "f32",
+    "float32": "f32",
+    "bfloat16": "bf16",
+}
 
 
 @dataclass(frozen=True)
@@ -157,6 +168,73 @@ def _validate_safetensors_file(path: Path) -> None:
             or offsets[1] > data_size
         ):
             raise ModelCompatibilityError(f"Safetensors tensor offsets are invalid in {path.name}")
+
+
+def _safetensors_quantization(config: dict) -> str | None:
+    sources = [config]
+    for key in ("text_config", "language_config", "llm_config"):
+        if isinstance(config.get(key), dict):
+            sources.append(config[key])
+    for source in sources:
+        quant = source.get("quantization_config")
+        if not isinstance(quant, dict):
+            continue
+        groups = quant.get("config_groups")
+        if isinstance(groups, dict) and groups:
+            group = groups.get("group_0") or groups.get("group0") or next(iter(groups.values()), None)
+            weights = group.get("weights") if isinstance(group, dict) else None
+            if isinstance(weights, dict):
+                bits = weights.get("num_bits")
+                gs = weights.get("group_size")
+                wtype = str(weights.get("type") or "int").upper()
+                if bits and gs:
+                    return f"{wtype}{bits}-G{gs}"
+                if bits:
+                    return f"{wtype}{bits}"
+        method = str(quant.get("quant_method") or quant.get("format") or "").strip()
+        if method:
+            return method.upper()
+    dtype = str(config.get("dtype") or config.get("torch_dtype") or "").strip()
+    return dtype.upper() if dtype else None
+
+
+def _estimate_safetensors_param_count(config: dict) -> int | None:
+    src = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    hidden = src.get("hidden_size")
+    layers = src.get("num_hidden_layers") or src.get("n_layers")
+    vocab = src.get("vocab_size")
+    if not (isinstance(hidden, int) and hidden > 0 and isinstance(layers, int) and layers > 0 and isinstance(vocab, int) and vocab > 0):
+        return None
+    heads = src.get("num_attention_heads") or 1
+    kv_heads = src.get("num_key_value_heads") or heads
+    head_dim = src.get("head_dim") or (hidden // heads)
+    attn_per_layer = (
+        hidden * (heads * head_dim)
+        + hidden * (kv_heads * head_dim) * 2
+        + (heads * head_dim) * hidden
+    )
+    n_expert = (
+        src.get("num_local_experts")
+        or src.get("num_experts")
+        or src.get("n_routed_experts")
+        or 0
+    )
+    moe_inter = src.get("moe_intermediate_size") or src.get("intermediate_size") or 0
+    dense_inter = src.get("intermediate_size") or moe_inter
+    mlp_only = set(src.get("mlp_only_layers") or ())
+    sparse_step = src.get("decoder_sparse_step") or 1
+    shared_experts = src.get("num_shared_experts") or src.get("n_shared_experts") or 0
+    shared_inter = src.get("shared_expert_intermediate_size") or moe_inter
+    total_mlp = 0
+    for layer in range(layers):
+        if n_expert and layer not in mlp_only and (layer + 1) % sparse_step == 0:
+            total_mlp += n_expert * 3 * hidden * moe_inter
+            if shared_experts:
+                total_mlp += shared_experts * 3 * hidden * shared_inter
+        elif dense_inter:
+            total_mlp += 3 * hidden * dense_inter
+    embed = vocab * hidden * (1 if src.get("tie_word_embeddings") else 2)
+    return int(embed + layers * attn_per_layer + total_mlp)
 
 
 def inspect_model(model_path: str | Path) -> ModelArtifact:
@@ -289,6 +367,24 @@ def inspect_model(model_path: str | Path) -> ModelArtifact:
             if isinstance(architectures, list) and architectures
             else str(config.get("model_type") or adapter.engine_arch)
         )
+        n_layer = int(config.get("num_hidden_layers") or config.get("n_layers") or 0) or None
+        n_expert = int(
+            config.get("num_local_experts")
+            or config.get("num_experts")
+            or config.get("n_routed_experts")
+            or config.get("moe_num_experts")
+            or 0
+        ) or None
+        n_expert_used = int(
+            config.get("num_experts_per_tok")
+            or config.get("num_experts_per_token")
+            or config.get("num_selected_experts")
+            or config.get("top_k")
+            or config.get("moe_top_k")
+            or 0
+        ) or None
+        safetensors_quant = _safetensors_quantization(config)
+        safetensors_params = _estimate_safetensors_param_count(config)
         return ModelArtifact(
             requested_path=str(requested),
             model_path=str(requested),
@@ -301,6 +397,11 @@ def inspect_model(model_path: str | Path) -> ModelArtifact:
             mmproj_path=None,
             repo_id=manifest.get("repo_id"),
             adapter_id=adapter.id,
+            quantization=safetensors_quant,
+            n_layer=n_layer,
+            n_expert=n_expert,
+            n_expert_used=n_expert_used,
+            parameter_count=safetensors_params,
         )
 
     if not config_path.exists():
@@ -312,15 +413,37 @@ def inspect_model(model_path: str | Path) -> ModelArtifact:
     architecture = architectures[0] if architectures else str(config.get("model_type") or "unknown")
     model_type = str(config.get("model_type") or "unknown")
     text_config = config.get("text_config") if isinstance(config.get("text_config"), dict) else {}
-    is_moe = any(
-        int(value or 0) > 0
-        for value in (
-            config.get("num_local_experts"),
-            config.get("n_routed_experts"),
-            text_config.get("num_local_experts"),
-            text_config.get("n_routed_experts"),
-        )
-    )
+    n_expert = int(
+        config.get("num_local_experts")
+        or config.get("num_experts")
+        or config.get("n_routed_experts")
+        or config.get("moe_num_experts")
+        or text_config.get("num_local_experts")
+        or text_config.get("num_experts")
+        or text_config.get("n_routed_experts")
+        or text_config.get("moe_num_experts")
+        or 0
+    ) or None
+    n_expert_used = int(
+        config.get("num_experts_per_tok")
+        or config.get("num_experts_per_token")
+        or config.get("num_selected_experts")
+        or config.get("top_k")
+        or config.get("moe_top_k")
+        or text_config.get("num_experts_per_tok")
+        or text_config.get("num_experts_per_token")
+        or text_config.get("num_selected_experts")
+        or text_config.get("top_k")
+        or text_config.get("moe_top_k")
+        or 0
+    ) or None
+    n_layer = int(
+        config.get("num_hidden_layers")
+        or config.get("n_layers")
+        or text_config.get("num_hidden_layers")
+        or 0
+    ) or None
+    is_moe = n_expert is not None and n_expert > 0
     size_bytes = sum(path.stat().st_size for path in tensor_files)
     if size_bytes <= 0:
         raise ModelCompatibilityError(f"Safetensors checkpoint contains no weight data: {requested}")
@@ -345,6 +468,8 @@ def inspect_model(model_path: str | Path) -> ModelArtifact:
                 f"Safetensors checkpoint is incomplete; {len(missing)} indexed shards are missing: {preview}"
             )
 
+    safetensors_quant = _safetensors_quantization(config)
+    safetensors_params = _estimate_safetensors_param_count(config)
     return ModelArtifact(
         requested_path=str(requested),
         model_path=str(requested),
@@ -357,6 +482,11 @@ def inspect_model(model_path: str | Path) -> ModelArtifact:
         mmproj_path=None,
         repo_id=manifest.get("repo_id"),
         adapter_id=adapter.id if adapter else None,
+        quantization=safetensors_quant,
+        n_layer=n_layer,
+        n_expert=n_expert,
+        n_expert_used=n_expert_used,
+        parameter_count=safetensors_params,
     )
 
 
@@ -377,6 +507,7 @@ def _llama_server_help(launcher: list[str]) -> str:
             capture_output=True,
             text=True,
             timeout=8,
+            **silent_subprocess_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""
@@ -391,6 +522,7 @@ def _llama_server_version(launcher: list[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=8,
+            **silent_subprocess_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -400,7 +532,7 @@ def _llama_server_version(launcher: list[str]) -> str | None:
 
 def _help_has(help_text: str, *needles: str) -> bool:
     lowered = help_text.lower()
-    return any(needle.lower() in lowered for needle in needles)
+    return any(re.search(r"(?<![\w-])" + re.escape(needle.lower()) + r"(?![\w-])", lowered) for needle in needles)
 
 
 def _find_vllm() -> list[str] | None:
@@ -474,12 +606,36 @@ def _visible_gpu_memory_mb() -> list[int]:
             capture_output=True,
             text=True,
             timeout=5,
+            **silent_subprocess_kwargs(),
         )
     except (OSError, subprocess.TimeoutExpired):
         return []
     if output.returncode:
         return []
     return [int(line.strip()) for line in output.stdout.splitlines() if line.strip().isdigit()]
+
+
+def _first_visible_gpu_free_mb() -> int | None:
+    """Read current free VRAM for the first CUDA-visible NVIDIA GPU."""
+    executable = shutil.which("nvidia-smi") or shutil.which("nvidia-smi.exe")
+    if not executable:
+        return None
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is not None:
+        device = visible.split(",")[0].strip()
+        if not device or device == "-1":
+            return None
+    else:
+        device = "0"
+    try:
+        result = subprocess.run([executable, "--id=" + device, "--query-gpu=memory.free",
+                                 "--format=csv,noheader,nounits"],
+                                capture_output=True, text=True, timeout=5, check=False,
+                                **silent_subprocess_kwargs())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = result.stdout.strip()
+    return int(value) if result.returncode == 0 and value.isdigit() else None
 
 
 def build_backend_plan(
@@ -489,12 +645,14 @@ def build_backend_plan(
     host: str = "127.0.0.1",
     port: int = 8080,
     context: int = 4096,
+    context_length: int | None = None,
     verification_positions: int = 8,
     storage_bandwidth_mbps: int = 3500,
     target_tps: float = 5.0,
     draft_url: str | None = None,
     draft_model: str | None = None,
-    vram_limit_mb: int = 8192,
+    draft_model_path: str | None = None,
+    vram_limit_mb: int | None = 8192,
     ram_limit_mb: int | None = None,
     cpu_kv_cache: bool = False,
     kv_cache_quant: str = "q8_0",
@@ -502,27 +660,48 @@ def build_backend_plan(
     project_root: str | Path | None = None,
     force_gpu_layers: int | None = None,
     allow_cpu_only: bool = False,
+    prefer_cpu_offload: bool = False,
+    prefer_gpu: bool = True,
+    moe_expert_offload: str = "auto",
+    vram_guardrail_mb: int | None = None,
+    allow_unverified: bool = False,
 ) -> BackendPlan:
+    if context_length is not None:
+        context = context_length
+    if not prefer_gpu:
+        allow_cpu_only = True
+    if prefer_cpu_offload and moe_expert_offload == "auto":
+        moe_expert_offload = "cpu"
+
     if (
         context <= 0
         or verification_positions <= 0
         or storage_bandwidth_mbps <= 0
         or target_tps <= 0
-        or vram_limit_mb <= 0
+        or (vram_limit_mb is not None and vram_limit_mb <= 0)
     ):
         raise ModelCompatibilityError(
             "Context, speculative verification positions, storage bandwidth, target TPS, "
             "and VRAM limit must be positive"
         )
+    kv_norm = kv_cache_quant.strip().lower()
+    if kv_norm not in _SUPPORTED_KV_QUANTS:
+        raise ModelCompatibilityError(f"Unsupported KV cache quantization: {kv_cache_quant!r}")
+    if moe_expert_offload not in {"auto", "cpu", "off"}:
+        raise ModelCompatibilityError("moe_expert_offload must be auto, cpu, or off")
+    if force_gpu_layers is not None and force_gpu_layers < 0:
+        raise ModelCompatibilityError("GPU layers cannot be negative")
     artifact = inspect_model(model_path)
     reasons: list[str] = []
     warnings: list[str] = []
     requested_backend = backend.strip().lower()
-    if requested_backend not in {"auto", "llama_cpp", "vllm", "sytra_moe", "colibri"}:
+    if requested_backend not in {"auto", "llama_cpp", "vllm", "sytra_moe"}:
         raise ModelCompatibilityError(f"Unknown inference backend: {backend!r}")
 
     root = Path(project_root).resolve() if project_root else None
     ram_budget_mb = ram_limit_mb if ram_limit_mb is not None else _system_memory_mb()
+    if ram_limit_mb is None and ram_budget_mb <= 0:
+        raise ModelCompatibilityError("Could not detect system RAM; pass an explicit --ram-limit-mb.")
     if ram_budget_mb < 0:
         raise ModelCompatibilityError("RAM limit cannot be negative")
     config_root = (
@@ -541,47 +720,91 @@ def build_backend_plan(
         adapter_by_id(artifact.adapter_id) if artifact.adapter_id else None
     )
 
-    coli_launcher = find_colibri(root)
-    colibri_family = detect_colibri_family(
-        adapter_family=adapter.family if adapter else None,
-        adapter_id=artifact.adapter_id,
-        model_type=artifact.model_type,
-        architecture=artifact.architecture,
-        repo_id=artifact.repo_id,
-    )
-    if coli_launcher is None:
-        coli_launcher = maybe_provision_colibri(
-            root,
-            requested_backend=requested_backend,
-            colibri_family=colibri_family,
-        )
-    native_engine = _find_sytra_engine(root)
-
     if artifact.format == "gguf":
         automatic: BackendName = "llama_cpp"
-    elif (
-        artifact.format == "sytra_moe"
-        and native_engine is not None
-        and (adapter is None or adapter.family not in COLIBRI_PREFERRED_FAMILIES)
-    ):
-        automatic = "sytra_moe"
-    elif coli_launcher and (
-        colibri_family
-        or artifact.format == "sytra_moe"
-        or (artifact.is_moe and native_engine is None)
-    ):
-        automatic = "colibri"
     elif artifact.format == "sytra_moe":
         automatic = "sytra_moe"
     else:
         automatic = "vllm"
     selected: BackendName = automatic if requested_backend == "auto" else requested_backend  # type: ignore[assignment]
 
+    gpu_memory = _visible_gpu_memory_mb()
+    gpu_visible = bool(gpu_memory) and prefer_gpu
+    if vram_limit_mb is None:
+        if gpu_visible:
+            vram_limit_mb = gpu_memory[0] if selected == "llama_cpp" else sum(gpu_memory)
+        elif not prefer_gpu or allow_cpu_only:
+            vram_limit_mb = 1
+            if force_gpu_layers is None:
+                force_gpu_layers = 0
+            warnings.append("No GPU VRAM detected or GPU disabled; planning CPU-only inference.")
+        elif selected == "sytra_moe":
+            vram_limit_mb = 1
+            warnings.append("No GPU VRAM detected; Sytra-Helix MoE plan uses CPU/RAM/NVMe execution.")
+        else:
+            raise ModelCompatibilityError(
+                "Could not detect GPU VRAM; pass an explicit --vram-limit-mb or --no-gpu for CPU-only inference."
+            )
+    elif gpu_visible:
+        visible_limit = gpu_memory[0] if selected == "llama_cpp" else sum(gpu_memory)
+        if vram_limit_mb > visible_limit:
+            warnings.append(
+                f"Requested VRAM limit ({vram_limit_mb} MiB) exceeded detected GPU VRAM ({visible_limit} MiB); capped to {visible_limit} MiB."
+            )
+            vram_limit_mb = visible_limit
+
+    draft_reserve_mb = 0
+    resolved_draft = None
+    if draft_model_path:
+        if selected != 'llama_cpp':
+            raise ModelCompatibilityError('A local draft model currently requires llama.cpp and GGUF')
+        draft = Path(draft_model_path).expanduser().resolve()
+        if not draft.is_file() or draft.suffix.lower() != '.gguf' or draft == Path(artifact.model_path).resolve():
+            raise ModelCompatibilityError('Choose a distinct local GGUF draft model')
+        draft_meta = try_read_gguf_metadata(draft)
+        if gguf_meta is None or draft_meta is None:
+            raise ModelCompatibilityError('Cannot verify target and draft GGUF tokenizers')
+        keys = ('tokenizer.ggml.model', 'tokenizer.ggml.tokens', 'tokenizer.ggml.scores',
+                'tokenizer.ggml.pre', 'tokenizer.ggml.token_type',
+                'tokenizer.ggml.bos_token_id', 'tokenizer.ggml.eos_token_id',
+                'tokenizer.ggml.unknown_token_id', 'tokenizer.ggml.padding_token_id',
+                'tokenizer.ggml.add_bos_token',
+                'tokenizer.ggml.add_eos_token', 'tokenizer.ggml.merges')
+        if not gguf_meta.raw.get(keys[0]) or not gguf_meta.raw.get(keys[1]) or any(
+                gguf_meta.raw.get(key) != draft_meta.raw.get(key) for key in keys):
+            raise ModelCompatibilityError('Target and draft tokenizer metadata must match')
+        target_arch = gguf_meta.raw.get('general.architecture')
+        draft_arch = draft_meta.raw.get('general.architecture')
+        if target_arch and draft_arch and target_arch != draft_arch:
+            raise ModelCompatibilityError(
+                f'Target ({target_arch}) and draft ({draft_arch}) model architectures must match'
+            )
+        draft_kv = estimate_kv_cache(draft_meta.config_for_kv(), context_tokens=context,
+                                     dtype='fp16', cpu_cache=True).estimated_bytes
+        draft_reserve_mb = (draft.stat().st_size + (draft_kv or 512 * 1024**2) + 1024**2 - 1) // 1024**2 + 512
+        if draft_reserve_mb >= ram_budget_mb:
+            raise ModelCompatibilityError(f'Draft model requires an estimated {draft_reserve_mb} MiB of RAM; increase the RAM limit')
+        resolved_draft = str(draft)
+        warnings.append(f'Draft model reserves an estimated {draft_reserve_mb} MiB of RAM and runs on CPU; speedup depends on the models and hardware.')
+
+    if vram_guardrail_mb is not None:
+        if type(vram_guardrail_mb) is not int or vram_guardrail_mb < 0:
+            raise ModelCompatibilityError("VRAM guardrail must be a non-negative integer")
+        if selected != "llama_cpp" or not prefer_gpu:
+            raise ModelCompatibilityError("Live VRAM guardrail currently requires a GPU llama.cpp backend")
+        free_mb = _first_visible_gpu_free_mb()
+        if free_mb is None:
+            raise ModelCompatibilityError("Cannot read free NVIDIA VRAM for the configured guardrail")
+        if free_mb <= vram_guardrail_mb:
+            raise ModelCompatibilityError("Free VRAM does not exceed the configured guardrail")
+        vram_limit_mb = min(vram_limit_mb, free_mb - vram_guardrail_mb)
+        warnings.append(f"VRAM budget limited to {vram_limit_mb} MiB from {free_mb} MiB free with a {vram_guardrail_mb} MiB guardrail on the first visible GPU.")
+
     if artifact.format == "gguf" and selected != "llama_cpp":
         raise ModelCompatibilityError("Standalone GGUF checkpoints use llama_cpp")
-    if artifact.format == "sytra_moe" and selected not in {"sytra_moe", "colibri"}:
+    if artifact.format == "sytra_moe" and selected != "sytra_moe":
         raise ModelCompatibilityError(
-            "A native out-of-core container must use Sytra's native MoE runtime or the Colibri bridge"
+            "A native out-of-core MoE container must use Sytra-Helix's native MoE runtime (`sytra_moe`)."
         )
     if selected == "sytra_moe" and (
         adapter is None or adapter.engine != "sytra_moe"
@@ -591,15 +814,15 @@ def build_backend_plan(
             ".sytra-runtime.json contract; Sytra will not guess an architecture kernel."
         )
 
+    effective_kv_quant = kv_norm
     kv_plan = estimate_kv_cache(
         config,
         context_tokens=context,
-        dtype=kv_cache_quant,
+        dtype=effective_kv_quant,
         cpu_cache=cpu_kv_cache,
-        persistent=selected in {"sytra_moe", "colibri"},
+        persistent=selected == "sytra_moe",
         tier="engine-managed" if selected == "sytra_moe" else None,
     )
-    gpu_memory = _visible_gpu_memory_mb()
     tensor_parallel = int(
         os.environ.get("SYTRA_VLLM_TENSOR_PARALLEL_SIZE", str(max(len(gpu_memory), 1)))
     )
@@ -610,8 +833,8 @@ def build_backend_plan(
         vram_budget_mb=vram_limit_mb,
         ram_budget_mb=ram_budget_mb,
         tensor_parallel_size=tensor_parallel,
-        allow_cpu_offload=selected in {"llama_cpp", "vllm", "sytra_moe", "colibri"},
-        allow_nvme_streaming=selected in {"sytra_moe", "colibri"},
+        allow_cpu_offload=selected in {"llama_cpp", "vllm", "sytra_moe"},
+        allow_nvme_streaming=selected == "sytra_moe",
     )
 
     weight_mb = (artifact.size_bytes + 1024**2 - 1) // 1024**2
@@ -620,26 +843,6 @@ def build_backend_plan(
         if selected == "vllm"
         else None
     )
-    if (
-        selected == "vllm"
-        and requested_backend == "auto"
-        and placement.strategy == "insufficient-memory"
-        and coli_launcher
-        and (colibri_family or artifact.is_moe)
-    ):
-        selected = "colibri"
-        warnings.append(
-            "Checkpoint exceeds the vLLM GPU+RAM envelope; Sytra hands token generation to Colibri."
-        )
-        placement = plan_weight_placement(
-            weight_bytes=artifact.size_bytes,
-            vram_budget_mb=vram_limit_mb,
-            ram_budget_mb=ram_budget_mb,
-            tensor_parallel_size=tensor_parallel,
-            allow_cpu_offload=True,
-            allow_nvme_streaming=True,
-        )
-        required_vram_mb = None
     command: list[str] = []
     preflight_command: list[str] = []
     compatible = True
@@ -649,37 +852,66 @@ def build_backend_plan(
     if selected == "llama_cpp":
         launcher = _find_llama_server(root)
         help_text = _llama_server_help(launcher) if launcher else ""
+        if resolved_draft:
+            model_flag = next((flag for flag in ('--spec-draft-model', '--model-draft', '-md') if _help_has(help_text, flag)), None)
+            layers_flag = next((flag for flag in ('--spec-draft-ngl', '--n-gpu-layers-draft', '-ngld') if _help_has(help_text, flag)), None)
+            if not model_flag or not layers_flag:
+                raise ModelCompatibilityError('Installed llama.cpp does not advertise draft model and draft GPU-layer options')
         runtime_version = _llama_server_version(launcher) if launcher else None
+        layout = read_gguf_layer_sizes(artifact.model_path, artifact.n_layer) if artifact.n_layer else None
+        if cpu_kv_cache and not _help_has(help_text, "--no-kv-offload", "-nkvo"):
+            raise ModelCompatibilityError("Installed llama.cpp does not advertise CPU KV offload")
+        llama_kv_type = _LLAMA_KV_TYPE_MAP.get(kv_norm, kv_norm)
+        has_ctk = _help_has(help_text, "--cache-type-k", "-ctk")
+        # If cache quant flags cannot be verified, budget the runtime's F16 default.
+        if not has_ctk:
+            if kv_norm not in {"auto", "fp16", "f16", "float16"}:
+                warnings.append(
+                    f"Installed llama.cpp does not advertise -ctk/-ctv; planning FP16 KV cache instead of {kv_cache_quant}."
+                )
+            effective_kv_quant = "fp16"
+            kv_plan = estimate_kv_cache(config, context_tokens=context, dtype="fp16", cpu_cache=cpu_kv_cache)
+        elif kv_norm in _QUANTIZED_KV_QUANTS and not flash_attention:
+            compatible = False
+            reasons.append(
+                f"Quantized KV cache ({kv_cache_quant}) requires Flash Attention enabled in llama.cpp; enable Flash Attention or select fp16."
+            )
+        elif kv_norm in {"q4_0", "q4_1", "q5_0", "q5_1", "iq4_nl"}:
+            warnings.append(
+                f"{kv_cache_quant.upper()} KV cache reduces KV memory versus FP16/Q8_0 and may affect perplexity on sensitive tasks; evaluate on your prompts."
+            )
         offload = plan_llama_cpp_offload(
             weight_bytes=artifact.size_bytes,
             vram_budget_mb=vram_limit_mb,
-            ram_budget_mb=ram_budget_mb,
+            ram_budget_mb=ram_budget_mb - draft_reserve_mb,
             n_layer=artifact.n_layer,
             kv_bytes=kv_plan.estimated_bytes,
             cpu_count=os.cpu_count() or 4,
             windows=os.name == "nt",
+            cpu_kv_cache=cpu_kv_cache,
+            force_gpu_layers=force_gpu_layers,
+            layer_sizes=layout[0] if layout else None,
         )
-        llama_offload = offload
-        if force_gpu_layers is not None:
-            n_layer = artifact.n_layer or offload.n_layer or force_gpu_layers
-            gpu_layers = max(0, force_gpu_layers)
-            cpu_layers = max((n_layer or gpu_layers) - gpu_layers, 0)
-            llama_offload = LlamaCppOffloadPlan(
-                gpu_layers=gpu_layers,
-                cpu_layers=cpu_layers,
-                n_layer=offload.n_layer,
-                peak_vram_mb=offload.peak_vram_mb,
-                peak_ram_mb=offload.peak_ram_mb,
-                mmap=offload.mmap,
-                mlock=offload.mlock,
-                threads=offload.threads,
-                batch=offload.batch,
-                ubatch=offload.ubatch,
-                strategy="cpu-only" if gpu_layers == 0 else offload.strategy,
-                notes=offload.notes + (f"Forced n-gpu-layers={gpu_layers}.",),
+        if artifact.is_moe and moe_expert_offload != "off" and layout and sum(layout[1]) and _help_has(help_text, "--cpu-moe"):
+            candidate = plan_llama_cpp_offload(
+                weight_bytes=artifact.size_bytes,
+                vram_budget_mb=vram_limit_mb,
+                ram_budget_mb=ram_budget_mb - draft_reserve_mb,
+                n_layer=artifact.n_layer,
+                kv_bytes=kv_plan.estimated_bytes,
+                cpu_count=os.cpu_count() or 4,
+                windows=os.name == "nt",
+                cpu_kv_cache=cpu_kv_cache,
+                force_gpu_layers=force_gpu_layers,
+                layer_sizes=layout[0],
+                expert_sizes=layout[1],
+                cpu_moe=True,
             )
-            offload = llama_offload
-        gpu_visible = bool(gpu_memory)
+            if moe_expert_offload == "cpu" or (candidate.strategy != "insufficient-memory" and candidate.gpu_layers > offload.gpu_layers):
+                offload = candidate
+        elif moe_expert_offload == "cpu":
+            raise ModelCompatibilityError("CPU expert offload requires an MoE GGUF with readable tensor sizes and llama.cpp --cpu-moe support")
+        llama_offload = offload
         if gpu_visible and offload.gpu_layers == 0 and not allow_cpu_only:
             compatible = False
             reasons.append(
@@ -715,11 +947,13 @@ def build_backend_plan(
                 "-ub",
                 str(offload.ubatch),
             ]
+            if offload.cpu_moe:
+                command.append("--cpu-moe")
             if help_text:
                 if _help_has(help_text, "-fa", "--flash-attn"):
                     command.extend(["-fa", "on" if flash_attention else "off"])
-                if _help_has(help_text, "-ctk"):
-                    command.extend(["-ctk", kv_cache_quant, "-ctv", kv_cache_quant])
+                if _help_has(help_text, "-ctk") and llama_kv_type != "auto":
+                    command.extend(["-ctk", llama_kv_type, "-ctv", llama_kv_type])
                 if cpu_kv_cache and _help_has(help_text, "-nkvo"):
                     command.append("-nkvo")
                 if _help_has(help_text, "--no-mmap") and not offload.mmap:
@@ -730,6 +964,10 @@ def build_backend_plan(
                     command.extend(["--split-mode", "layer"])
             if artifact.mmproj_path:
                 command.extend(["--mmproj", artifact.mmproj_path])
+            if resolved_draft:
+                command.extend([model_flag, resolved_draft, layers_flag, '0'])
+                if _help_has(help_text, '--spec-type') and 'draft-simple' in help_text:
+                    command.extend(['--spec-type', 'draft-simple'])
             reasons.append(
                 "GGUF uses llama.cpp GPU-first hybrid: transformer blocks fill VRAM; "
                 "cold layers stay mmap'd in RAM. mlock stays off on Windows."
@@ -737,7 +975,7 @@ def build_backend_plan(
             reasons.extend(offload.notes)
             if artifact.is_moe:
                 warnings.append(
-                    "MoE GGUF: llama.cpp keeps inactive experts in mmap'd host memory. "
+                    "MoE GGUF: expert placement follows the resolved layer/CPU-expert plan. "
                     "Sytra does not claim native expert-pager speed unless .sytra-runtime.json exists."
                 )
             if artifact.n_expert and artifact.n_expert_used:
@@ -762,8 +1000,8 @@ def build_backend_plan(
                 f"Checkpoint needs approximately {required_vram_mb} MiB before runtime overhead, "
                 f"but the conservative GPU+RAM budget is {vram_limit_mb + ram_budget_mb} MiB. "
                 "No verified NVMe adapter matches this architecture. "
-                "If Colibri (`coli`) is installed, retry with --backend colibri; otherwise "
-                "build sytra-engine and create a .sytra-runtime.json index."
+                "Build sytra-engine (`cargo build -p sytra-engine --release`) and create a "
+                ".sytra-runtime.json index to serve via Sytra-Helix MoE."
             )
         if launcher is not None and compatible:
             command = launcher + [
@@ -789,6 +1027,14 @@ def build_backend_plan(
                 )
                 if artifact.is_moe:
                     command.extend(["--cpu-offload-params", "experts"])
+            if kv_norm in {"fp8", "float8"}:
+                command.extend(["--kv-cache-dtype", "fp8"])
+            elif kv_norm in _QUANTIZED_KV_QUANTS:
+                effective_kv_quant = "fp16"
+                kv_plan = estimate_kv_cache(config, context_tokens=context, dtype="fp16", cpu_cache=cpu_kv_cache)
+                warnings.append(
+                    f"vLLM does not support ggml {kv_cache_quant} KV cache quantization; planning FP16 KV cache instead."
+                )
             if tensor_parallel > 1:
                 command.extend(["--tensor-parallel-size", str(tensor_parallel)])
                 if artifact.is_moe:
@@ -813,19 +1059,14 @@ def build_backend_plan(
         except AdapterCompatibilityError as exc:
             compatible = False
             reasons.append(str(exc))
-        if launcher is None and requested_backend == "auto" and compatible and find_colibri(root):
-            selected = "colibri"
-            warnings.append(
-                "Native sytra-engine was not found; planning a Colibri (`coli serve`) bridge instead."
-            )
-        elif launcher is None:
+        if launcher is None:
             compatible = False
             reasons.append(
-                "Sytra's native engine was not found. Build `cargo build -p sytra-engine "
-                "--release`, install sytra-engine on PATH, set SYTRA_ENGINE_COMMAND, "
-                "or install Colibri (`coli`) and pass --backend colibri."
+                "Sytra-Helix native MoE engine (`sytra-engine`) was not found. "
+                "Build `cargo build -p sytra-engine --release`, install sytra-engine on PATH, "
+                "or set SYTRA_ENGINE_COMMAND."
             )
-        if selected == "sytra_moe" and launcher is not None and compatible:
+        if launcher is not None and compatible:
             command = launcher + [
                 "serve",
                 "--model",
@@ -855,6 +1096,17 @@ def build_backend_plan(
                 command.extend(["--draft-url", draft_url])
                 if draft_model:
                     command.extend(["--draft-model", draft_model])
+            oracle_path = Path(artifact.model_path) / ".sytra-oracle.json"
+            if not oracle_path.is_file():
+                if allow_unverified:
+                    command.append("--allow-unverified-checkpoint")
+                    warnings.append(
+                        "Checkpoint has no .sytra-oracle.json; starting Helix with explicit unverified checkpoint override."
+                    )
+                else:
+                    warnings.append(
+                        "Checkpoint has no .sytra-oracle.json; generate an oracle first or enable unverified checkpoint startup."
+                    )
             preflight_command = launcher + [
                 "doctor",
                 "--model",
@@ -876,11 +1128,23 @@ def build_backend_plan(
                 "--target-tps",
                 str(target_tps),
             ]
+            if allow_unverified and not oracle_path.is_file():
+                preflight_command.append("--allow-unverified-checkpoint")
             reasons.append(
-                f"{adapter.display_name} uses Sytra's native byte-exact expert store, "
-                "batch-union scheduler, RAM/accelerator cache, and NVMe prefetch path."
+                f"{adapter.display_name} uses Sytra-Helix MoE v2 native byte-exact expert store, "
+                "batch-union scheduler, RAM/accelerator cache, heterogeneous CPU+GPU co-execution, "
+                "layer-windowed anti-OOM execution, and NVMe prefetch path."
             )
-            if kv_cache_quant.lower() not in {"auto", "fp16"}:
+            if kv_cache_quant.lower() not in {"auto", "fp16", "f16", "float16", "bf16", "bfloat16"}:
+                effective_kv_quant = "fp16"
+                kv_plan = estimate_kv_cache(
+                    config,
+                    context_tokens=context,
+                    dtype="fp16",
+                    cpu_cache=cpu_kv_cache,
+                    persistent=True,
+                    tier="engine-managed",
+                )
                 warnings.append(
                     "The native architecture adapter owns compressed/persistent KV state; "
                     f"the generic {kv_cache_quant} KV setting is not forced."
@@ -890,86 +1154,72 @@ def build_backend_plan(
                     "The native architecture adapter controls KV placement; the generic CPU-KV switch is ignored."
                 )
 
-    if selected == "colibri":
-        launcher = coli_launcher or find_colibri(root)
-        coli_model = os.environ.get("COLI_MODEL") or artifact.model_path
-        served_id = colibri_model_id(
-            repo_id=artifact.repo_id,
-            family=colibri_family,
-            architecture=artifact.architecture,
-        )
-        if launcher is None:
-            compatible = False
-            command = []
-            reasons.append(colibri_install_hint(root))
-        elif compatible:
-            command = build_colibri_serve_command(
-                launcher,
-                model_path=coli_model,
-                host=host,
-                port=port,
-                context=context,
-                vram_limit_mb=vram_limit_mb,
-                ram_limit_mb=ram_budget_mb,
-                gpu_visible=bool(gpu_memory),
-                model_id=served_id,
-            )
-            preflight_command = build_colibri_preflight_command(
-                launcher, model_path=coli_model
-            )
-            reasons.append(
-                "Sytra handles catalog, download, and the VRAM/RAM/NVMe envelope; "
-                "Colibri (`coli serve --auto-tier`) streams experts and generates tokens. "
-                "On a 12 GB GPU expect well below 5 tok/s for frontier MoE — see estimates.io_max_tps."
-            )
-
     io_max_tps = estimate_streamed_moe_tps(
         nvme_weight_bytes=placement.estimated_nvme_weight_bytes,
         n_expert=artifact.n_expert,
         n_expert_used=artifact.n_expert_used,
         storage_bandwidth_mbps=storage_bandwidth_mbps,
     )
-    if io_max_tps is not None and selected in {"sytra_moe", "colibri"} and compatible:
-        if io_max_tps < COLIBRI_STREAMING_FLOOR_TPS:
+    helix_plan = (
+        build_helix_resource_plan(
+            weight_bytes=artifact.size_bytes,
+            vram_limit_mb=vram_limit_mb,
+            ram_limit_mb=ram_budget_mb,
+            nvme_weight_bytes=placement.estimated_nvme_weight_bytes,
+            storage_bandwidth_mbps=storage_bandwidth_mbps,
+            target_tps=target_tps,
+            strategy=placement.strategy,
+            io_max_tps=io_max_tps,
+            gpu_visible=gpu_visible or vram_limit_mb > 0,
+            allow_cpu_only=allow_cpu_only or not prefer_gpu,
+            parameter_count=artifact.parameter_count,
+            quantization=artifact.quantization,
+            n_layer=artifact.n_layer,
+            n_expert=artifact.n_expert,
+            n_expert_used=artifact.n_expert_used,
+            adapter_id=artifact.adapter_id,
+            architecture=artifact.architecture,
+            config=config,
+        )
+        if selected == "sytra_moe" or artifact.is_moe
+        else None
+    )
+
+    if io_max_tps is not None and selected == "sytra_moe" and compatible:
+        if io_max_tps < HELIX_STREAMING_FLOOR_TPS:
             compatible = False
             command = []
             reasons.append(
                 f"Storage bandwidth {storage_bandwidth_mbps} MB/s bounds streamed MoE decode at "
-                f"about {io_max_tps:.3f} tok/s, below Colibri's proven floor "
-                f"({COLIBRI_STREAMING_FLOOR_TPS:g} tok/s). This host cannot stream this checkpoint."
+                f"about {io_max_tps:.3f} tok/s, below Sytra-Helix's minimum streaming floor "
+                f"({HELIX_STREAMING_FLOOR_TPS:g} tok/s). This host cannot stream this checkpoint."
             )
         elif io_max_tps < target_tps:
-            if selected == "sytra_moe":
-                compatible = False
-                command = []
-                reasons.append(
-                    f"Storage bandwidth {storage_bandwidth_mbps} MB/s bounds streamed MoE decode at "
-                    f"about {io_max_tps:.3f} tok/s, below --target-tps {target_tps:g}. "
-                    "Lower --target-tps, raise measured --storage-bandwidth-mbps, or use a smaller model. "
-                    f"Sytra will not claim {target_tps:g} tok/s on this envelope."
-                )
-            else:
-                warnings.append(
-                    f"Colibri I/O math caps decode around {io_max_tps:.3f} tok/s, below "
-                    f"--target-tps {target_tps:g}. Serving anyway; this is not a 5 tok/s claim."
-                )
+            compatible = False
+            command = []
+            reasons.append(
+                f"Storage bandwidth {storage_bandwidth_mbps} MB/s bounds streamed MoE decode at "
+                f"about {io_max_tps:.3f} tok/s, below --target-tps {target_tps:g}. "
+                "Lower --target-tps, raise measured --storage-bandwidth-mbps, or use a smaller model. "
+                f"Sytra will not claim {target_tps:g} tok/s on this envelope."
+            )
 
     kv_snapshots = {}
     for ctx in (2048, 4096, 8192):
         snap = estimate_kv_cache(
             config,
             context_tokens=ctx,
-            dtype=kv_cache_quant,
+            dtype=effective_kv_quant,
             cpu_cache=cpu_kv_cache,
-            persistent=selected in {"sytra_moe", "colibri"},
+            persistent=selected == "sytra_moe",
         )
         kv_snapshots[f"kv_{ctx // 1024}k_mb"] = (
             None if snap.estimated_bytes is None else (snap.estimated_bytes + 1024**2 - 1) // 1024**2
         )
     active_params = None
     if artifact.parameter_count and artifact.n_expert and artifact.n_expert_used:
-        # Rough: routed experts scale by k/n; dense remainder assumed 30%.
-        dense = int(artifact.parameter_count * 0.30)
+        dense_share = 0.05 if artifact.n_expert >= 64 else 0.20
+        dense = int(artifact.parameter_count * dense_share)
         routed = artifact.parameter_count - dense
         active_params = dense + int(routed * artifact.n_expert_used / artifact.n_expert)
     estimates = {
@@ -978,7 +1228,8 @@ def build_backend_plan(
         "gpu_layers": llama_offload.gpu_layers if llama_offload else None,
         "cpu_layers": llama_offload.cpu_layers if llama_offload else None,
         "peak_vram_mb": llama_offload.peak_vram_mb if llama_offload else required_vram_mb,
-        "peak_ram_mb": llama_offload.peak_ram_mb if llama_offload else None,
+        "peak_ram_mb": llama_offload.peak_ram_mb + draft_reserve_mb if llama_offload else None,
+        "draft_ram_reserve_mb": draft_reserve_mb or None,
         "total_params": artifact.parameter_count,
         "active_params_per_token": active_params,
         "quantization": artifact.quantization,
@@ -988,23 +1239,7 @@ def build_backend_plan(
         "io_max_tps": io_max_tps,
         "target_tps": target_tps,
         "storage_bandwidth_mbps": storage_bandwidth_mbps,
-        "colibri_resource_plan": colibri_resource_plan(
-            vram_limit_mb=vram_limit_mb,
-            ram_limit_mb=ram_budget_mb,
-            nvme_weight_bytes=placement.estimated_nvme_weight_bytes,
-            storage_bandwidth_mbps=storage_bandwidth_mbps,
-            target_tps=target_tps,
-            strategy=placement.strategy,
-            io_max_tps=io_max_tps,
-            family=colibri_family,
-            model_id=colibri_model_id(
-                repo_id=artifact.repo_id,
-                family=colibri_family,
-                architecture=artifact.architecture,
-            ),
-        )
-        if selected == "colibri"
-        else None,
+        "helix_resource_plan": helix_plan.to_dict() if helix_plan else None,
     }
 
     return BackendPlan(
@@ -1024,3 +1259,11 @@ def build_backend_plan(
         runtime_version=runtime_version,
         estimates=estimates,
     )
+
+
+def launch_backend_plan(plan: BackendPlan) -> subprocess.Popen:
+    if not plan.compatible or not plan.command:
+        reasons = "; ".join(plan.reasons) if plan.reasons else "No valid launch command"
+        raise ModelCompatibilityError(f"Cannot launch incompatible backend plan: {reasons}")
+    env = prepend_runtime_path(os.environ.copy(), plan.command)
+    return subprocess.Popen(plan.command, env=env, **silent_subprocess_kwargs())

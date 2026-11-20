@@ -112,9 +112,6 @@ static KIMI_K3: AdapterDescriptor = AdapterDescriptor {
 
 static KIMI_K27_CODE: AdapterDescriptor = AdapterDescriptor {
     id: "sytra-kimi-k2.7-code",
-    // The public checkpoint is a KimiK25 multimodal wrapper around a kimi_k2
-    // DeepSeek-V3-compatible text tower. Both types are validated from
-    // config.json by `KimiK27Config`; the manifest records the outer type.
     model_type_prefixes: &["kimi_k25"],
     families: &[ModelFamily::KimiK27],
     attention: &[AttentionKind::Mla],
@@ -124,8 +121,6 @@ static KIMI_K27_CODE: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
-    // The complete text forward path is linked. A checkpoint-specific
-    // reference-logit and teacher-forced oracle is still mandatory at runtime.
     forward_kernel: true,
 };
 
@@ -155,7 +150,7 @@ static INKLING: AdapterDescriptor = AdapterDescriptor {
 
 static DEEPSEEK_V3: AdapterDescriptor = AdapterDescriptor {
     id: "sytra-deepseek-v3",
-    model_type_prefixes: &["deepseek_v2", "deepseek_v3"],
+    model_type_prefixes: &["deepseek_v2", "deepseek_v3", "deepseek_v4", "deepseek_r1"],
     families: &[ModelFamily::DeepseekV3],
     attention: &[AttentionKind::Mla],
     routers: &[RouterSemantics::NoAuxTc, RouterSemantics::GroupLimitedTopK],
@@ -165,6 +160,7 @@ static DEEPSEEK_V3: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::Fp8E4m3,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -178,7 +174,7 @@ static DEEPSEEK_V3: AdapterDescriptor = AdapterDescriptor {
 
 static QWEN3_MOE: AdapterDescriptor = AdapterDescriptor {
     id: "sytra-qwen3-moe",
-    model_type_prefixes: &["qwen3_moe", "qwen3_next"],
+    model_type_prefixes: &["qwen3_moe", "qwen3_next", "qwen3.8", "qwen3_8"],
     families: &[ModelFamily::Qwen3Moe],
     attention: &[
         AttentionKind::Standard,
@@ -195,6 +191,7 @@ static QWEN3_MOE: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::Fp8E4m3,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -203,7 +200,6 @@ static QWEN3_MOE: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
-    // The exact BF16/packed-INT4 qwen3_moe (not qwen3_next) subset is checked dynamically.
     forward_kernel: true,
 };
 
@@ -221,6 +217,7 @@ static QWEN2_MOE: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::F16,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -229,7 +226,6 @@ static QWEN2_MOE: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
-    // The exact BF16/packed-INT4 discrete qwen2_moe subset is checked dynamically.
     forward_kernel: true,
 };
 
@@ -247,6 +243,7 @@ static MIXTRAL: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::F16,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -255,9 +252,6 @@ static MIXTRAL: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
-    // The exact BF16/packed-INT4 discrete or stacked-axis0 subset is checked dynamically by
-    // `MixtralConfig::validate_manifest`; broader storage contracts remain
-    // rejected by runtime construction.
     forward_kernel: true,
 };
 
@@ -272,6 +266,7 @@ static OLMOE: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::F16,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -280,7 +275,6 @@ static OLMOE: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
-    // The exact BF16/packed-INT4 standard-attention subset is checked dynamically.
     forward_kernel: true,
 };
 
@@ -323,6 +317,7 @@ static GRANITE_MOE: AdapterDescriptor = AdapterDescriptor {
         WeightFormat::F16,
         WeightFormat::Int4Group,
         WeightFormat::PackedInt4Group32,
+        WeightFormat::PackedInt4Group,
     ],
     expert_layouts: &[
         ExpertTensorLayout::Discrete,
@@ -331,8 +326,6 @@ static GRANITE_MOE: AdapterDescriptor = AdapterDescriptor {
     activations: &[ActivationKind::Silu, ActivationKind::Gelu],
     reference_math: true,
     storage_only: false,
-    // Exact GraniteMoE multipliers, selected-top-k softmax, stacked experts,
-    // standard GQA, and logits scaling are handled by the standard executor.
     forward_kernel: true,
 };
 
@@ -355,6 +348,115 @@ static ARCTIC: AdapterDescriptor = AdapterDescriptor {
         ExpertTensorLayout::StackedAxis0,
     ],
     activations: &[ActivationKind::Silu, ActivationKind::Gelu],
+    reference_math: true,
+    storage_only: false,
+    forward_kernel: false,
+};
+
+static GROK: AdapterDescriptor = AdapterDescriptor {
+    id: "sytra-grok",
+    model_type_prefixes: &["grok", "grok-1", "grok_1", "grok-2", "grok_2"],
+    families: &[ModelFamily::Grok],
+    attention: &[AttentionKind::Standard],
+    routers: &[
+        RouterSemantics::TopKSoftmax,
+        RouterSemantics::TopKNormalized,
+    ],
+    expert_formats: &[
+        WeightFormat::Bf16,
+        WeightFormat::F16,
+        WeightFormat::Fp8E4m3,
+        WeightFormat::Int8,
+        WeightFormat::Int4Group,
+        WeightFormat::PackedInt4Group32,
+    ],
+    expert_layouts: &[
+        ExpertTensorLayout::Discrete,
+        ExpertTensorLayout::StackedAxis0,
+    ],
+    activations: &[
+        ActivationKind::Silu,
+        ActivationKind::Gelu,
+        ActivationKind::GeluTanh,
+    ],
+    reference_math: true,
+    storage_only: false,
+    forward_kernel: false,
+};
+
+static LLAMA4_MOE: AdapterDescriptor = AdapterDescriptor {
+    id: "sytra-llama4-moe",
+    model_type_prefixes: &["llama4", "llama4_moe", "llama_moe"],
+    families: &[ModelFamily::Llama4Moe],
+    attention: &[AttentionKind::Standard, AttentionKind::SlidingWindow],
+    routers: &[
+        RouterSemantics::TopKSigmoid,
+        RouterSemantics::TopKSoftmax,
+        RouterSemantics::TopKNormalized,
+    ],
+    expert_formats: &[
+        WeightFormat::Bf16,
+        WeightFormat::F16,
+        WeightFormat::Fp8E4m3,
+        WeightFormat::Int4Group,
+        WeightFormat::PackedInt4Group32,
+    ],
+    expert_layouts: &[
+        ExpertTensorLayout::Discrete,
+        ExpertTensorLayout::StackedAxis0,
+    ],
+    activations: &[ActivationKind::Silu],
+    reference_math: true,
+    storage_only: false,
+    forward_kernel: false,
+};
+
+static ERNIE_MOE: AdapterDescriptor = AdapterDescriptor {
+    id: "sytra-ernie-moe",
+    model_type_prefixes: &["ernie"],
+    families: &[ModelFamily::ErnieMoe],
+    attention: &[AttentionKind::Standard],
+    routers: &[
+        RouterSemantics::TopKSoftmax,
+        RouterSemantics::TopKNormalized,
+    ],
+    expert_formats: &[
+        WeightFormat::Bf16,
+        WeightFormat::F16,
+        WeightFormat::Int4Group,
+        WeightFormat::PackedInt4Group32,
+    ],
+    expert_layouts: &[
+        ExpertTensorLayout::Discrete,
+        ExpertTensorLayout::StackedAxis0,
+    ],
+    activations: &[ActivationKind::Silu, ActivationKind::Gelu],
+    reference_math: true,
+    storage_only: false,
+    forward_kernel: false,
+};
+
+static JAMBA_MOE: AdapterDescriptor = AdapterDescriptor {
+    id: "sytra-jamba-moe",
+    model_type_prefixes: &["jamba"],
+    families: &[ModelFamily::JambaMoe],
+    attention: &[AttentionKind::Hybrid, AttentionKind::Standard],
+    routers: &[
+        RouterSemantics::TopKSoftmax,
+        RouterSemantics::TopKNormalized,
+    ],
+    expert_formats: &[
+        WeightFormat::Bf16,
+        WeightFormat::F16,
+        WeightFormat::Int8,
+        WeightFormat::Int4Group,
+        WeightFormat::PackedInt4Group32,
+    ],
+    expert_layouts: &[
+        ExpertTensorLayout::Discrete,
+        ExpertTensorLayout::StackedAxis0,
+    ],
+    activations: &[ActivationKind::Silu],
     reference_math: true,
     storage_only: false,
     forward_kernel: false,
@@ -455,6 +557,10 @@ pub fn compiled_adapters() -> Vec<&'static AdapterDescriptor> {
         &DBRX,
         &GRANITE_MOE,
         &ARCTIC,
+        &GROK,
+        &LLAMA4_MOE,
+        &ERNIE_MOE,
+        &JAMBA_MOE,
         &MINIMAX_MOE,
         &GENERIC_MOE,
     ]
@@ -518,9 +624,6 @@ pub fn validate_compiled_contract(
 }
 
 /// Validate the narrower contract handled by a complete forward executor.
-/// Descriptors may accept additional formats for storage/indexing, so callers
-/// must use this predicate rather than treating `forward_kernel` as applying
-/// to every format listed by the descriptor.
 pub fn validate_forward_contract(
     manifest: &RuntimeManifest,
 ) -> Result<&'static AdapterDescriptor, AdapterError> {
@@ -540,9 +643,9 @@ pub fn validate_forward_contract(
         let exact_expert_format = contract.expert_format == WeightFormat::Bf16
             || (descriptor.id == "sytra-granite-moe"
                 && contract.expert_format == WeightFormat::F32)
-            || (contract.expert_format == WeightFormat::PackedInt4Group32
+            || (contract.expert_format.is_packed_int4()
                 && contract.quantization.bits == 4
-                && contract.quantization.group_size == 32
+                && contract.packed_group_size().is_some()
                 && contract.quantization.symmetric
                 && contract
                     .quantization
@@ -835,5 +938,24 @@ mod tests {
         let descriptor = validate_compiled_contract(&manifest).unwrap();
         assert!(descriptor.storage_only);
         assert!(!descriptor.forward_kernel);
+    }
+
+    #[test]
+    fn frontier_grok_llama4_ernie_and_jamba_adapters_are_compiled() {
+        for (id, model_type, family, attention) in [
+            ("sytra-grok", "grok", ModelFamily::Grok, AttentionKind::Standard),
+            ("sytra-llama4-moe", "llama4_moe", ModelFamily::Llama4Moe, AttentionKind::Standard),
+            ("sytra-ernie-moe", "ernie_moe", ModelFamily::ErnieMoe, AttentionKind::Standard),
+            ("sytra-jamba-moe", "jamba", ModelFamily::JambaMoe, AttentionKind::Hybrid),
+        ] {
+            let mut manifest = kimi_manifest();
+            manifest.architecture.adapter = id.into();
+            manifest.architecture.model_type = model_type.into();
+            manifest.architecture.family = family;
+            manifest.architecture.attention = attention;
+            manifest.architecture.router = RouterSemantics::TopKSoftmax;
+            manifest.architecture.expert_format = WeightFormat::Bf16;
+            assert_eq!(validate_compiled_contract(&manifest).unwrap().id, id);
+        }
     }
 }

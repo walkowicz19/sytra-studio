@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
+use crate::manifest::{decode_packed_shape, validate_packed_shape_segment};
 use crate::{
-    apply_activation, int4_group32_bf16_matmul_cpu, AcceleratorBuffer, ActivationKind,
+    apply_activation, int4_group_bf16_matmul_cpu, AcceleratorBuffer, ActivationKind,
     CudaAccelerator, ResidentExpert, ResidentTensor, StandardKvCache,
 };
 
@@ -78,6 +79,7 @@ struct PackedInt4MatrixRef<'a> {
     scale_offset: usize,
     rows: usize,
     cols: usize,
+    group_size: usize,
 }
 
 /// Execute one floating-point gated expert without expanding its immutable
@@ -156,12 +158,13 @@ pub fn floating_gated_expert_batch_resident(
 }
 
 /// Execute either an exact floating expert or compressed-tensors packed
-/// symmetric INT4 group-32 expert from a bounded resident lease.
+/// symmetric INT4 groupwise expert from a bounded resident lease.
 #[allow(clippy::too_many_arguments)]
-pub fn standard_gated_expert_batch_resident(
+pub fn standard_gated_expert_batch_resident_with_group(
     resident: &ResidentExpert,
     hidden_size: usize,
     intermediate_size: usize,
+    group_size: usize,
     positions: usize,
     hidden: &[f32],
     activation: ActivationKind,
@@ -177,6 +180,7 @@ pub fn standard_gated_expert_batch_resident(
             &resident.tensors,
             hidden_size,
             intermediate_size,
+            group_size,
             positions,
             hidden,
             activation,
@@ -194,6 +198,30 @@ pub fn standard_gated_expert_batch_resident(
             cuda,
         )
     }
+}
+
+/// Execute either an exact floating expert or compressed-tensors packed
+/// symmetric INT4 group-32 expert from a bounded resident lease.
+#[allow(clippy::too_many_arguments)]
+pub fn standard_gated_expert_batch_resident(
+    resident: &ResidentExpert,
+    hidden_size: usize,
+    intermediate_size: usize,
+    positions: usize,
+    hidden: &[f32],
+    activation: ActivationKind,
+    cuda: Option<&CudaAccelerator>,
+) -> Result<Vec<f32>, StandardMoeError> {
+    standard_gated_expert_batch_resident_with_group(
+        resident,
+        hidden_size,
+        intermediate_size,
+        32,
+        positions,
+        hidden,
+        activation,
+        cuda,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -306,6 +334,7 @@ fn packed_int4_gated_expert_batch_impl(
     tensors: &[ResidentTensor],
     hidden_size: usize,
     intermediate_size: usize,
+    group_size: usize,
     positions: usize,
     hidden: &[f32],
     activation: ActivationKind,
@@ -357,6 +386,7 @@ fn packed_int4_gated_expert_batch_impl(
         down_predicate,
         hidden_size,
         intermediate_size,
+        group_size,
     )?;
     let (mut gate_output, up_output) = if has_fused {
         let matrix = packed_matrix(
@@ -365,6 +395,7 @@ fn packed_int4_gated_expert_batch_impl(
             fused_predicate,
             2 * intermediate_size,
             hidden_size,
+            group_size,
         )?;
         (
             packed_matmul_rows(
@@ -395,6 +426,7 @@ fn packed_int4_gated_expert_batch_impl(
                     gate_predicate,
                     intermediate_size,
                     hidden_size,
+                    group_size,
                 )?,
                 0,
                 intermediate_size,
@@ -404,7 +436,14 @@ fn packed_int4_gated_expert_batch_impl(
                 resident,
             )?,
             packed_matmul_rows(
-                packed_matrix(bytes, tensors, up_predicate, intermediate_size, hidden_size)?,
+                packed_matrix(
+                    bytes,
+                    tensors,
+                    up_predicate,
+                    intermediate_size,
+                    hidden_size,
+                    group_size,
+                )?,
                 0,
                 intermediate_size,
                 positions,
@@ -441,11 +480,12 @@ fn packed_matrix<'a>(
     predicate: impl Fn(&str) -> bool + Copy,
     rows: usize,
     cols: usize,
+    group_size: usize,
 ) -> Result<PackedInt4MatrixRef<'a>, StandardMoeError> {
-    if !cols.is_multiple_of(32) {
-        return Err(StandardMoeError::Contract(
-            "packed INT4 group-32 projection width is not divisible by 32".into(),
-        ));
+    if group_size == 0 || !cols.is_multiple_of(group_size) {
+        return Err(StandardMoeError::Contract(format!(
+            "packed INT4 group-{group_size} projection width is not divisible by {group_size}"
+        )));
     }
     let find = |suffix: &str| {
         tensors.iter().find(|tensor| {
@@ -461,7 +501,7 @@ fn packed_matrix<'a>(
         StandardMoeError::Contract("packed expert logical shape is missing".into())
     })?;
     let words_per_row = cols.div_ceil(8);
-    let groups_per_row = cols / 32;
+    let groups_per_row = cols / group_size;
     validate_packed_tensor(
         packed,
         "I32",
@@ -474,7 +514,12 @@ fn packed_matrix<'a>(
         &[rows as u64, groups_per_row as u64],
         rows * groups_per_row * 2,
     )?;
-    validate_packed_tensor(shape, "I32", &[2], 8)?;
+    if !validate_packed_shape_segment(shape.dtype.as_deref(), &shape.shape, shape.length as u64) {
+        return Err(StandardMoeError::Contract(format!(
+            "{} must be I32 or I64 [2]",
+            shape.name
+        )));
+    }
 
     let slice = |tensor: &ResidentTensor| {
         payload
@@ -490,9 +535,9 @@ fn packed_matrix<'a>(
     let packed_bytes = slice(packed)?;
     let scale_bytes = slice(scales)?;
     if let Some(logical) = slice(shape)? {
-        let logical_rows = i32::from_le_bytes(logical[0..4].try_into().expect("validated shape"));
-        let logical_cols = i32::from_le_bytes(logical[4..8].try_into().expect("validated shape"));
-        if logical_rows != rows as i32 || logical_cols != cols as i32 {
+        let (logical_rows, logical_cols) =
+            decode_packed_shape(shape.dtype.as_deref(), logical).map_err(StandardMoeError::Contract)?;
+        if logical_rows != rows || logical_cols != cols {
             return Err(StandardMoeError::Contract(format!(
                 "packed expert logical shape [{logical_rows}, {logical_cols}] does not match [{rows}, {cols}]"
             )));
@@ -505,6 +550,7 @@ fn packed_matrix<'a>(
         scale_offset: scales.offset,
         rows,
         cols,
+        group_size,
     })
 }
 
@@ -539,7 +585,7 @@ fn packed_matmul_rows(
         ));
     }
     let words_per_row = matrix.cols.div_ceil(8);
-    let groups_per_row = matrix.cols / 32;
+    let groups_per_row = matrix.cols / matrix.group_size;
     let packed_start = first_row * words_per_row * 4;
     let packed_end = (first_row + rows) * words_per_row * 4;
     let scale_start = first_row * groups_per_row * 2;
@@ -547,12 +593,13 @@ fn packed_matmul_rows(
     if let Some(cuda) = cuda {
         if let Some(resident) = resident {
             return cuda
-                .resident_int4_group32_bf16_matmul(
+                .resident_int4_group_bf16_matmul(
                     resident,
                     matrix.packed_offset + packed_start,
                     matrix.scale_offset + scale_start,
                     rows,
                     matrix.cols,
+                    matrix.group_size,
                     positions,
                     input,
                 )
@@ -565,11 +612,12 @@ fn packed_matmul_rows(
             StandardMoeError::Execution("packed expert has no host scales".into())
         })?;
         return cuda
-            .int4_group32_bf16_bytes_matmul(
+            .int4_group_bf16_bytes_matmul(
                 &packed[packed_start..packed_end],
                 &scales[scale_start..scale_end],
                 rows,
                 matrix.cols,
+                matrix.group_size,
                 positions,
                 input,
             )
@@ -583,7 +631,7 @@ fn packed_matmul_rows(
     })?;
     let packed = &packed[packed_start..packed_end];
     let scales = &scales[scale_start..scale_end];
-    int4_group32_bf16_matmul_cpu(packed, scales, rows, matrix.cols, positions, input)
+    int4_group_bf16_matmul_cpu(packed, scales, rows, matrix.cols, matrix.group_size, positions, input)
         .map_err(|error| StandardMoeError::Execution(error.to_string()))
 }
 
@@ -908,6 +956,7 @@ mod tests {
             &tensors,
             hidden_size,
             intermediate_size,
+            32,
             positions,
             &input,
             ActivationKind::Silu,

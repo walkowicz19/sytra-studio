@@ -6,6 +6,16 @@ from pathlib import Path
 
 ATTN = ["q_proj", "k_proj", "v_proj", "o_proj"]
 MLP = ATTN + ["gate_proj", "up_proj", "down_proj"]
+# Qwen3.5 hybrid: 8 full-attention layers (q/k/v/o) + 24 Gated DeltaNet layers.
+# Suffix matching also hits mlp.* and must never include vision/visual modules.
+QWEN35_LORA = ATTN + [
+    "in_proj_qkv",
+    "in_proj_z",
+    "out_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
 
 def entry(
@@ -55,26 +65,8 @@ def entry(
 
 models: list[dict] = []
 
-# Existing contracts (keep IDs used by tests)
+# Core verified models
 models += [
-    entry(
-        "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
-        "Llama 3 8B Instruct (MLX 4-bit)",
-        8_030_000_000,
-        "LlamaForCausalLM",
-        ["chat", "general", "instruction-following", "mlx"],
-        license="llama3",
-        dtype="float16",
-        tokenizer_id="meta-llama/Meta-Llama-3-8B-Instruct",
-        modules=ATTN,
-        format="mlx",
-        downloadable=False,
-        workflows=[],
-        gated=True,
-        approx_gb=4.5,
-        hint="high",
-        risks=["Apple MLX package — not for Windows CUDA or llama.cpp."],
-    ),
     entry(
         "mistralai/Mistral-7B-v0.1",
         "Mistral 7B v0.1",
@@ -86,39 +78,6 @@ models += [
         approx_gb=14.5,
     ),
     entry(
-        "org/knowledge-ft",
-        "Knowledge Fine-tuned Mistral",
-        7_242_000_000,
-        "MistralForCausalLM",
-        ["knowledge"],
-        tokenizer_id="mistralai/Mistral-7B-v0.1",
-        downloadable=False,
-        workflows=["merge"],
-        modules=ATTN,
-    ),
-    entry(
-        "org/toolcalling-ft",
-        "Toolcalling Fine-tuned Mistral",
-        7_242_000_000,
-        "MistralForCausalLM",
-        ["tool-use"],
-        tokenizer_id="mistralai/Mistral-7B-v0.1",
-        downloadable=False,
-        workflows=["merge"],
-        modules=ATTN,
-    ),
-    entry(
-        "org/behavior-ft",
-        "Behavior Fine-tuned Mistral",
-        7_242_000_000,
-        "MistralForCausalLM",
-        ["chat"],
-        tokenizer_id="mistralai/Mistral-7B-v0.1",
-        downloadable=False,
-        workflows=["merge"],
-        modules=ATTN,
-    ),
-    entry(
         "Qwen/Qwen2.5-Coder-7B-Instruct",
         "Qwen2.5 Coder 7B Instruct",
         7_620_000_000,
@@ -126,6 +85,15 @@ models += [
         ["code", "frontend", "instruction-following", "fine-tuning"],
         hint="high",
         approx_gb=15.2,
+    ),
+    entry(
+        "Qwen/Qwen2.5-Coder-14B-Instruct",
+        "Qwen2.5 Coder 14B Instruct",
+        14_770_000_000,
+        "Qwen2ForCausalLM",
+        ["code", "instruction-following", "fine-tuning", "kairos-sophron"],
+        hint="high",
+        approx_gb=29.5,
     ),
     entry(
         "Qwen/Qwen2.5-7B-Instruct",
@@ -146,6 +114,63 @@ models += [
         hint="high",
         approx_gb=20.0,
         risks=["Never treat as Qwen2. Vision tensors must not receive text LoRA."],
+    ),
+    entry(
+        "Qwen/Qwen3-4B-Instruct-2507",
+        "Qwen3 4B Instruct 2507",
+        4_022_468_096,
+        "Qwen3ForCausalLM",
+        ["chat", "instruction-following", "fine-tuning", "agent"],
+        modules=MLP,
+        hint="high",
+        approx_gb=8.0,
+        risks=[
+            "Non-thinking instruct checkpoint: does not emit <think> blocks. Do not enable thinking.",
+            "Distinct from Qwen/Qwen3-4B (hybrid thinking). eos is <|im_end|> (151645).",
+        ],
+    ),
+    entry(
+        "Qwen/Qwen3.5-9B",
+        "Qwen3.5 9B",
+        10_000_000_000,
+        "Qwen3_5ForConditionalGeneration",
+        ["code", "instruction-following", "fine-tuning", "multimodal", "agent"],
+        modules=QWEN35_LORA,
+        hint="high",
+        approx_gb=20.0,
+        risks=[
+            "Never treat as Qwen2. Vision tensors must not receive text LoRA.",
+            "Hybrid Gated DeltaNet layers need in_proj_qkv/in_proj_z/out_proj plus MLP; q/k/v/o alone adapts only 8 of 32 layers.",
+        ],
+    ),
+    entry(
+        "Qwen/Qwen3-14B",
+        "Qwen3 14B",
+        14_800_000_000,
+        "Qwen3ForCausalLM",
+        ["chat", "reasoning", "multilingual", "fine-tuning", "kairos-sotos"],
+        modules=MLP,
+        hint="high",
+        approx_gb=29.6,
+        risks=[
+            "Thinking mode is on by default. Fine-tune and serve with enable_thinking=False unless the dataset includes gold <think> spans.",
+        ],
+    ),
+    entry(
+        "Qwen/Qwen3.8-27B",
+        "Qwen3.8 27B",
+        27_000_000_000,
+        "Qwen3_5ForConditionalGeneration",
+        ["code", "reasoning", "multimodal", "fine-tuning", "agent", "kairos-sophia"],
+        modules=QWEN35_LORA,
+        hint="high",
+        approx_gb=54.0,
+        risks=[
+            "Same hybrid family as Qwen3.5 (config model_type=qwen3_5). Never load as Qwen2.",
+            "Native vision-language checkpoint. Text LoRA must not match vision tensors.",
+            "Gated DeltaNet + full-attention mix: q/k/v/o alone adapts only the full-attention layers.",
+            "Do not train on the local 12GB box. Kaggle/32GB+ only.",
+        ],
     ),
 ]
 

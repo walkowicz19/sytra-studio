@@ -51,12 +51,14 @@ pub enum LocalFormat {
     Jsonl,
     Csv,
     Parquet,
+    Manifest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalParams {
     pub path: PathBuf,
     pub format: LocalFormat,
+    #[serde(default)]
     pub mapping: std::collections::BTreeMap<String, String>,
 }
 
@@ -158,7 +160,13 @@ pub struct AdapterConfig {
     pub dropout: f64,
     pub target_modules: Vec<String>,
     pub quant_bits: Option<u32>,
+    #[serde(default)]
+    pub use_rslora: bool,
+    #[serde(default = "default_moe_topology")]
+    pub moe_topology: String,
 }
+
+fn default_moe_topology() -> String { "attention".to_string() }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -174,7 +182,12 @@ pub struct OptimConfig {
     pub schedule: Schedule,
     pub warmup_steps: u32,
     pub weight_decay: f64,
+    #[serde(alias = "gradient_accumulation_steps")]
     pub grad_accumulation_steps: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_lr_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_aux_coef: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +197,22 @@ pub struct TrainParams {
     pub batch_size: u32,
     pub max_seq_len: u32,
     pub save_every: u64,
-    pub packing: bool,
+    pub packing: Packing,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neftune_noise_alpha: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Packing {
+    Enabled(bool),
+    Auto(AutoPacking),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AutoPacking {
+    Auto,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -200,6 +228,7 @@ pub struct AlgoConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunOutput {
     pub adapter_path: PathBuf,
+    #[serde(rename = "resume_from_checkpoint", alias = "resume_from")]
     pub resume_from: Option<PathBuf>,
 }
 
@@ -209,8 +238,16 @@ pub struct RunConfig {
     pub run_id: Option<Uuid>,
     pub train_mode: TrainMode,
     pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init_adapter: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub performance: std::collections::BTreeMap<String, serde_json::Value>,
     pub backend: BackendConfig,
     pub data: DataSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub train_dataset: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub val_dataset: Option<PathBuf>,
     pub adapter: AdapterConfig,
     pub optim: OptimConfig,
     pub train: TrainParams,

@@ -48,6 +48,7 @@ function loadSavedCustomTheme(): CustomTheme {
 }
 
 export const customThemeStore = $state<CustomTheme>(loadSavedCustomTheme())
+export const cardRadii = { sharp: 2, default: 6, rounded: 12 }
 
 export function applyCustomTheme() {
   const root = document.documentElement
@@ -85,8 +86,7 @@ export function applyCustomTheme() {
   root.style.setProperty('--glow-color', hexToRgba(hex, glow * 0.8))
 
   // Border radius
-  const radii: Record<string, string> = { sharp: '2px', default: '6px', rounded: '12px' }
-  root.style.setProperty('--radius-card', radii[customThemeStore.borderRadius ?? 'default'] ?? '6px')
+  root.style.setProperty('--radius-card', `${cardRadii[customThemeStore.borderRadius] ?? cardRadii.default}px`)
 
   // Font family
   const fonts: Record<string, string> = {
@@ -99,8 +99,10 @@ export function applyCustomTheme() {
   root.style.setProperty('--font-ui', fonts[customThemeStore.fontFamily ?? 'system'] ?? 'system-ui, sans-serif')
 
   // Anim speed
-  const speeds: Record<string, string> = { off: '0s', slow: '0.5s', normal: '0.2s', fast: '0.08s' }
-  root.style.setProperty('--anim-duration', speeds[customThemeStore.animSpeed ?? 'normal'] ?? '0.2s')
+  const speeds = { off: 0, slow: 2.5, normal: 1, fast: 0.4 }
+  const speed = speeds[customThemeStore.animSpeed] ?? speeds.normal
+  root.style.setProperty('--anim-scale', String(speed))
+  root.style.setProperty('--anim-duration', `${speed * 200}ms`)
 
   // Card shadow
   const shadows: Record<string, string> = {
@@ -148,7 +150,7 @@ export function initTheme() {
 }
 
 // ─── Active tab ───────────────────────────────────────────────────────────────
-export type Tab = 'models' | 'train' | 'merge' | 'runs' | 'guider' | 'help' | 'settings'
+export type Tab = 'models' | 'datasets' | 'chat' | 'train' | 'merge' | 'runs' | 'guider' | 'help' | 'settings'
 export const tabStore = $state({ active: 'models' as Tab })
 export function setTab(t: Tab) { tabStore.active = t }
 
@@ -324,10 +326,18 @@ export function createDefaultDatasetItem(source: 'hf' | 'local' | 'synthetic' | 
 
 // ─── Forms Shared States (Phase 4) ─────────────────────────────────────────────
 export const trainFormStore = $state({
+  workflow: 'fresh' as 'fresh' | 'continue' | 'resume',
+  sourceAdapter: '',
+  performanceMode: 'auto' as 'auto' | 'safe' | 'fast',
+  trainingEngine: 'auto' as 'auto' | 'helix',
+  activationMemoryMb: 512,
+  helixPrefetch: false,
+  helixPrefetchMemoryMb: 256,
   model: 'mistralai/Mistral-7B-v0.1',
   trainMode: 'sft' as TrainMode,
   backend: 'auto' as BackendKind | 'auto',
   dataSplitSource: 'hf' as 'hf' | 'local' | 'synthetic' | 'klayer',
+  validationPath: '',
   
   // Multiple datasets mix support
   useMultiple: false,
@@ -341,7 +351,7 @@ export const trainFormStore = $state({
 
   // Local Params
   localPath: '',
-  localFormat: 'jsonl' as 'jsonl' | 'csv' | 'parquet',
+  localFormat: 'jsonl' as 'jsonl' | 'csv' | 'parquet' | 'manifest',
   localPromptCol: 'prompt',
   localCompletionCol: 'completion',
 
@@ -360,6 +370,9 @@ export const trainFormStore = $state({
   rank: 16,
   alpha: 32,
   dropout: 0.05,
+  useRsLora: true,
+  moeTopology: 'attention' as 'attention' | 'moe_hybrid' | 'moe_full',
+  routerAuxCoef: 0,
   quantBits: 0 as 0 | 4 | 8,
   
   // Optim & Train params
@@ -369,14 +382,19 @@ export const trainFormStore = $state({
   weightDecay: 0.0,
   gradAcc: 8,
   maxSteps: 200,
+  useEpochs: false,
+  epochs: 1,
   batchSize: 2,
   maxSeqLen: 2048,
   saveEvery: 50,
-  packing: false,
+  packing: 'auto' as boolean | 'auto',
+  completionOnlyLoss: true,
+  neftuneAlpha: 0,
   outputPath: 'runs/adapter',
 })
 
 export const mergeFormStore = $state({
+  performanceMode: 'auto' as 'auto' | 'safe' | 'fast',
   mergeMethod: 'slerp' as MergeMethod,
   models: [
     { model: 'mistralai/Mistral-7B-v0.1', weight: 0.5 },

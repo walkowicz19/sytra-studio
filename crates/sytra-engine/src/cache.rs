@@ -338,6 +338,41 @@ impl ResidencyManager {
         Ok(self.store.byte_len(key)?)
     }
 
+    pub fn evict_device_fraction(&self, denominator: usize) -> u64 {
+        let mut evicted = Vec::new();
+        let mut freed_bytes = 0_u64;
+        {
+            let Ok(mut state) = self.state.lock() else {
+                return 0;
+            };
+            let total = state.device.len();
+            if total == 0 {
+                return 0;
+            }
+            let target_count = (total / denominator.max(1)).max(1);
+            for _ in 0..target_count {
+                let Some(key) = state
+                    .device
+                    .iter()
+                    .min_by_key(|(_, entry)| (entry.heat >= 3, entry.last_used))
+                    .map(|(key, _)| *key)
+                else {
+                    break;
+                };
+                if let Some(entry) = state.device.remove(&key) {
+                    let bytes = entry.allocation.buffer.bytes as u64;
+                    state.metrics.accelerator_bytes =
+                        state.metrics.accelerator_bytes.saturating_sub(bytes);
+                    state.metrics.accelerator_evictions += 1;
+                    freed_bytes = freed_bytes.saturating_add(bytes);
+                    evicted.push(entry.allocation);
+                }
+            }
+        }
+        drop(evicted);
+        freed_bytes
+    }
+
     fn reserve_host(&self, key: ExpertKey, size: u64) -> Result<(), CacheError> {
         let mut state = self.state.lock().map_err(|_| CacheError::Poisoned)?;
         evict_host_to_fit(

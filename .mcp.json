@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "sytra-studio": {
-      "command": "npx",
-      "args": ["-y", "--prefer-online", "github:walkowicz19/sytra-studio", "mcp"]
+      "command": "sytra-mcp",
+      "args": []
     }
   }
 }

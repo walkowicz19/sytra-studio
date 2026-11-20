@@ -6,7 +6,7 @@ export type BackendKind = 'cuda' | 'mps' | 'cpu' | 'auto'
 export type TrainMode   = 'sft' | 'dpo' | 'orpo' | 'cpo'
 export type AdapterType = 'lora' | 'qlora' | 'dora'
 export type Schedule    = 'cosine' | 'linear' | 'constant'
-export type MergeMethod = 'slerp' | 'ties' | 'dare_ties' | 'task_vector' | 'linear'
+export type MergeMethod = 'slerp' | 'multi_slerp' | 'nuslerp' | 'ties' | 'dare_ties' | 'dare_linear' | 'task_arithmetic' | 'linear' | 'passthrough' | 'moe'
 export type OpStatus    = 'running' | 'done' | 'error' | 'stopped'
 export type Verdict     = 'green' | 'amber' | 'red'
 
@@ -36,7 +36,7 @@ export interface ModelDownloadStatus {
 export interface LocalModelItem {
   id: string
   name: string
-  category: 'downloaded' | 'finetuned' | 'merged'
+  category: 'downloaded' | 'hf-cache' | 'lm-studio' | 'finetuned' | 'merged' | 'custom'
   path: string
   size_gb: number
   format: string
@@ -56,6 +56,8 @@ export interface AdapterConfig {
   dropout:        number
   target_modules: string[]
   quant_bits?:    4 | 8 | null
+  use_rslora?:    boolean
+  moe_topology?:  'attention' | 'moe_hybrid' | 'moe_full'
 }
 
 export interface OptimConfig {
@@ -64,6 +66,8 @@ export interface OptimConfig {
   warmup_steps:          number
   weight_decay:          number
   grad_accumulation_steps: number
+  router_lr_ratio?: number | null
+  router_aux_coef?: number | null
 }
 
 export interface TrainParams {
@@ -72,7 +76,8 @@ export interface TrainParams {
   batch_size:  number
   max_seq_len: number
   save_every:  number
-  packing:     boolean
+  packing:     boolean | 'auto'
+  neftune_noise_alpha?: number | null
 }
 
 export interface RunConfig {
@@ -82,10 +87,15 @@ export interface RunConfig {
   model:     string
   backend:   { kind: BackendKind; judge_model?: string }
   data:      HfParams
+  train_dataset?: string
+  val_dataset?: string
   adapter:   AdapterConfig
   optim:     OptimConfig
   train:     TrainParams
-  output:    { adapter_path: string; resume_from?: string }
+  algo?:     { completion_only_loss?: boolean }
+  init_adapter?: string
+  performance?: { mode: 'auto' | 'safe' | 'fast' | 'custom'; training_engine?: 'auto' | 'helix'; activation_memory_mb?: number; helix_prefetch?: boolean; prefetch_pinned_memory_mb?: number }
+  output:    { adapter_path: string; resume_from_checkpoint?: string; resume_from?: string }
 }
 
 export interface ModelEntry {
@@ -192,4 +202,92 @@ export interface AppSettings {
   kv_cache_quant: string
   vram_limit_mb?: number | null
   cpu_kv_cache?: boolean
+}
+
+
+export interface OllamaModelInfo {
+  name: string
+  size_gb: number
+  parameter_size: string
+  quantization: string
+  language_scope?: 'multilingual' | 'english' | 'unknown'
+}
+
+export interface LiveProvidersStatus {
+  sytra_running: boolean
+  sytra_models: string[]
+  ollama_running: boolean
+  ollama_installed: boolean
+  ollama_models: OllamaModelInfo[]
+  lmstudio_running: boolean
+  lmstudio_models: string[]
+}
+
+export interface ChatTargetsReport {
+  providers: LiveProvidersStatus
+  local_models: LocalModelItem[]
+}
+
+export type AgentAvatarKind = 'pochi' | 'kitsune' | 'mochi' | 'owl' | 'custom'
+export type AgentComputerMode = 'sandbox' | 'pc_ask' | 'pc_auto'
+
+export interface AgentProfile {
+  id: string
+  name: string
+  role: string
+  system_prompt: string
+  avatar_kind: AgentAvatarKind
+  avatar_url?: string | null
+  provider?: string | null
+  model_id?: string | null
+  endpoint_url?: string | null
+  skill_ids: string[]
+  computer_mode: AgentComputerMode
+  routine_enabled: boolean
+  routine_interval_mins: number
+  routine_prompt: string
+  last_routine_at?: number | null
+}
+
+export interface MemoryEntry {
+  id: string
+  agent_id: string
+  session_id: string
+  session_title: string
+  kind: 'fact' | 'compaction' | 'routine'
+  summary: string
+  tags: string[]
+  created_at: number
+}
+
+export type VoiceEngineMode = 'browser' | 'kokoro'
+
+export interface VoiceOption {
+  id: string
+  label: string
+  lang: string
+}
+
+export interface VoiceRuntimeStatus {
+  env_ready: boolean
+  kokoro_model_ready: boolean
+  server_running: boolean
+  installing: boolean
+  stage: 'idle' | 'installing_env' | 'downloading_model' | 'starting' | 'installed' | 'ready' | 'error' | string
+  message: string
+  error?: string | null
+  active_port?: number | null
+  model_dir: string
+  voices: VoiceOption[]
+}
+
+export interface VoiceAudioResponse {
+  audio_base64: string
+  mime: string
+}
+
+export interface VoiceTranscriptResponse {
+  text: string
+  language: string
+  duration_sec: number
 }

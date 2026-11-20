@@ -12,16 +12,54 @@
   import Help from './components/Help.svelte'
   import Settings from './features/settings/Settings.svelte'
   import ModelHub from './features/models/ModelHub.svelte'
+  import DatasetFabric from './features/datasets/DatasetFabric.svelte'
+  import Chat from './features/chat/Chat.svelte'
   import Toast from './components/Toast.svelte'
-  import { onMount } from 'svelte'
+  import { chatPower, releaseChatGpu } from './features/chat/chatPower.svelte'
+  import { onDestroy, onMount } from 'svelte'
+
+  let leaveTimer: ReturnType<typeof setTimeout> | null = null
+  let idleTicker: ReturnType<typeof setInterval> | null = null
+
+  $effect(() => {
+    const activeTab = tabStore.active
+    if (activeTab === 'chat') {
+      if (leaveTimer) {
+        clearTimeout(leaveTimer)
+        leaveTimer = null
+      }
+      return
+    }
+    if (chatPower.releaseOnLeaveChat && chatPower.activeTarget && !chatPower.sleeping && !chatPower.isBusy) {
+      if (!leaveTimer) {
+        leaveTimer = setTimeout(() => {
+          leaveTimer = null
+          if (tabStore.active !== 'chat' && chatPower.releaseOnLeaveChat && !chatPower.isBusy) {
+            void releaseChatGpu('tab-leave')
+          }
+        }, 1500)
+      }
+    }
+  })
 
   onMount(async () => {
+    idleTicker = setInterval(() => {
+      if (chatPower.idleMinutes <= 0 || chatPower.sleeping || chatPower.isBusy || !chatPower.activeTarget) return
+      if (Date.now() - chatPower.lastActivityAt >= chatPower.idleMinutes * 60_000) {
+        void releaseChatGpu('idle')
+      }
+    }, 15_000)
     try {
       const info = await api.getHardwareInfo()
       setHwInfo(info)
     } catch (e) {
       console.error('Failed to load hardware info', e)
     }
+  })
+
+  onDestroy(() => {
+    if (leaveTimer) clearTimeout(leaveTimer)
+    if (idleTicker) clearInterval(idleTicker)
   })
 </script>
 
@@ -33,6 +71,10 @@
       <div class="pane animate-in">
         {#if tabStore.active === 'models'}
           <ModelHub />
+        {:else if tabStore.active === 'datasets'}
+          <DatasetFabric />
+        {:else if tabStore.active === 'chat'}
+          <Chat />
         {:else if tabStore.active === 'train'}
           {#if uiMode.advanced}<TrainForm />{:else}<SimpleTrain />{/if}
         {:else if tabStore.active === 'merge'}

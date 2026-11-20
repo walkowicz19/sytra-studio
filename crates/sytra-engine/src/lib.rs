@@ -1,4 +1,4 @@
-//! Native out-of-core MoE primitives for Sytra.
+//! Native out-of-core MoE primitives for Sytra-Helix MoE Engine v2.
 //!
 //! This crate owns placement and movement. Architecture adapters still own
 //! tensor interpretation, routing semantics, attention, and model kernels.
@@ -11,6 +11,7 @@ pub mod cuda;
 pub mod dense;
 pub mod draft;
 pub mod generation;
+pub mod helix;
 pub mod kimi_k27;
 pub mod manifest;
 pub mod mixtral;
@@ -40,21 +41,27 @@ pub use dense::{
     bf16_tile_cpu, bf16_tile_matmul_cpu, bf16_transpose_tile_cpu, bf16_transpose_tile_matmul_cpu,
     tiled_bf16_matmul, tiled_bf16_matmul_rows, tiled_bf16_matvec, tiled_bf16_matvec_rows,
     tiled_bf16_transpose_matmul_rows, tiled_bf16_transpose_matvec_rows, tiled_f32_matmul,
-    tiled_packed_int4_group32_bf16_matmul, DenseExecutionError, DenseTileMetrics,
-    TiledMatmulOutput, TiledMatvecOutput,
+    tiled_packed_int4_bf16_matmul, tiled_packed_int4_group32_bf16_matmul, DenseExecutionError,
+    DenseTileMetrics, TiledMatmulOutput, TiledMatvecOutput,
 };
 pub use draft::{DraftError, DraftModel, OpenAiDraftModel};
 pub use generation::{
     GenerationConfig, GenerationError, GenerationOutput, GenerationRuntime, KimiGenerator,
     MixtralGenerator, ModelGenerator,
 };
+pub use helix::{
+    cpu_simd_dot_f32, detect_cpu_isa_target, partition_heterogeneous_experts,
+    ActivationLookaheadPredictor, DualPathDispatchPlan, HelixExecutionPlan, HelixHardwareProfile,
+    HelixScaleTier, LayerWindowManager, LayerWindowSchedule, NgramSpeculativeTrie,
+};
 pub use kimi_k27::{
     apply_yarn_rope, attention_softmax_scale, decode_i32_le, decode_u32_le, expert_swiglu,
-    int4_group32_bf16_matmul_cpu, int4_group_matvec, mla_decode_absorbed_batch_bf16,
-    mla_decode_absorbed_bf16, mla_decode_reference, unpack_int4, AbsorbedMlaOutput,
-    CompactMlaCacheEntry, CompactMlaKvCache, KimiDecodeState, KimiError, KimiExecutionBackend,
-    KimiExpertWeights, KimiK27Config, KimiOneTokenExecutor, KimiSpeculativeOutput, KimiStepMetrics,
-    MlaCacheEntry, MlaKvCache, OwnedPackedInt4Matrix, PackedInt4Matrix,
+    int4_group32_bf16_matmul_cpu, int4_group_bf16_matmul_cpu, int4_group_matvec,
+    mla_decode_absorbed_batch_bf16, mla_decode_absorbed_bf16, mla_decode_reference, unpack_int4,
+    AbsorbedMlaOutput, CompactMlaCacheEntry, CompactMlaKvCache, KimiDecodeState, KimiError,
+    KimiExecutionBackend, KimiExpertWeights, KimiK27Config, KimiOneTokenExecutor,
+    KimiSpeculativeOutput, KimiStepMetrics, MlaCacheEntry, MlaKvCache, OwnedPackedInt4Matrix,
+    PackedInt4Matrix,
 };
 pub use manifest::{
     ActivationKind, ArchitectureContract, AttentionContract, AttentionKind, ExpertLocation,
@@ -92,8 +99,8 @@ pub use server::{
 pub use speculative::{verify_greedy, GreedyVerification, SpeculativeController, SpeculativeError};
 pub use standard::{
     floating_gated_expert_batch, floating_gated_expert_batch_resident,
-    floating_gated_expert_batch_with_cuda, standard_gated_expert_batch_resident, StandardMoeError,
-    StandardMoeKvState,
+    floating_gated_expert_batch_with_cuda, standard_gated_expert_batch_resident,
+    standard_gated_expert_batch_resident_with_group, StandardMoeError, StandardMoeKvState,
 };
 pub use store::{
     DenseStoreMetrics, DenseTensorStore, ExpertKey, ExpertPayload, ExpertStore, ResidentTensor,

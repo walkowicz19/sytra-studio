@@ -5,6 +5,8 @@
 
   const simpleTabs: { id: Tab; key: string; iconClass: string }[] = [
     { id: 'models', key: 'nav.models',  iconClass: 'bi-cloud-arrow-down' },
+    { id: 'datasets', key: 'nav.datasets', iconClass: 'bi-database' },
+    { id: 'chat', key: 'nav.chat', iconClass: 'bi-chat-dots' },
     { id: 'train',  key: 'nav.teach',   iconClass: 'bi-fire' },
     { id: 'merge',  key: 'nav.combine', iconClass: 'bi-lightning-charge' },
     { id: 'runs',   key: 'nav.history', iconClass: 'bi-clock-history' },
@@ -13,6 +15,8 @@
   ]
   const advancedTabs: { id: Tab; key: string; iconClass: string }[] = [
     { id: 'models', key: 'nav.models', iconClass: 'bi-cloud-arrow-down' },
+    { id: 'datasets', key: 'nav.datasets', iconClass: 'bi-database' },
+    { id: 'chat', key: 'nav.chat', iconClass: 'bi-chat-dots' },
     { id: 'train',  key: 'nav.train',  iconClass: 'bi-fire' },
     { id: 'merge',  key: 'nav.merge',  iconClass: 'bi-lightning-charge' },
     { id: 'runs',   key: 'nav.runs',   iconClass: 'bi-clock-history' },
@@ -94,7 +98,7 @@
     >
       <i class="bi {themeStore.dark ? 'bi-sun-fill' : 'bi-moon-fill'}"></i>
     </button>
-    <span class="version">v1.2.0</span>
+    <span class="version">v1.3.0</span>
   </div>
 </aside>
 

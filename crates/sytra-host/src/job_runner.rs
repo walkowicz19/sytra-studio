@@ -90,12 +90,15 @@ impl JobRunner {
             ;
         crate::apply_xet_safety(&mut cmd);
         crate::apply_desktop_priority(&mut cmd);
+        if let Operation::Publish(spec) = op {
+            cmd.env("HF_TOKEN", &spec.token);
+        }
 
         let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
 
         // Hold the lock across the busy-check and the spawn so two
         // concurrent starts can't both pass the check.
-        let mut active = self.active.lock().unwrap();
+        let mut active = self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if active.is_some() {
             return Err(anyhow!(
                 "An operation is already running. Stop it before starting a new one."
@@ -162,7 +165,7 @@ impl JobRunner {
             // generation). If stop() already took it, or a newer operation
             // occupies the slot, leave it alone.
             let taken = {
-                let mut active = active_ref.lock().unwrap();
+                let mut active = active_ref.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 match active.as_ref() {
                     Some(job) if job.generation == generation => active.take(),
                     _ => None,
@@ -195,7 +198,7 @@ impl JobRunner {
     /// double-click on Stop or a stop after natural completion never errors.
     pub fn stop(&self) -> Result<()> {
         let taken = {
-            let mut active = self.active.lock().unwrap();
+            let mut active = self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             active.take()
         };
         if let Some(mut job) = taken {
@@ -208,7 +211,7 @@ impl JobRunner {
     }
 
     pub fn is_running(&self) -> bool {
-        let active = self.active.lock().unwrap();
+        let active = self.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         active.is_some()
     }
 }

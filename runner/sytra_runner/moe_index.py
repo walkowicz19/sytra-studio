@@ -38,6 +38,7 @@ WEIGHT_FORMATS = {
     "int8",
     "int4_group",
     "packed_int4_group32",
+    "packed_int4_group",
     "fp8_e4m3",
     "nvfp4",
     "mxfp4",
@@ -111,10 +112,13 @@ def _detect_expert_format(config: dict[str, Any], adapter_id: str) -> str:
             if (
                 isinstance(weights, dict)
                 and weights.get("num_bits") == 4
-                and weights.get("group_size") == 32
                 and weights.get("symmetric") is True
             ):
-                return "packed_int4_group32"
+                group_size = weights.get("group_size")
+                if group_size == 32:
+                    return "packed_int4_group32"
+                if group_size in (64, 128, 256):
+                    return "packed_int4_group"
         method = str(quant.get("quant_method") or quant.get("format") or "").lower()
         if "fp8" in method:
             return "fp8_e4m3"

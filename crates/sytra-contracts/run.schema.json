@@ -1,0 +1,340 @@
+{
+  "type": "object",
+  "required": [
+    "model",
+    "data"
+  ],
+  "description": "Fine-tuning config. init_adapter starts new training with saved LoRA weights; output.resume_from_checkpoint restores full Trainer state.",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Sytra run contract version."
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Operation UUID; assigned by the host when omitted."
+    },
+    "model": {
+      "type": "string",
+      "description": "Catalog base model ID or local adapter directory containing adapter_config.json and adapter_model.safetensors. The adapter base must be in the catalog."
+    },
+    "init_adapter": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Local LoRA checkpoint to post-train. Inherits saved rank, alpha, targets and dropout; resets optimizer and step counter. Requires a separate output directory."
+    },
+    "train_mode": {
+      "type": "string",
+      "enum": [
+        "sft",
+        "dpo",
+        "orpo",
+        "cpo"
+      ],
+      "description": "Training objective."
+    },
+    "backend": {
+      "type": "object",
+      "description": "Accelerator selection; training requires CUDA.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "auto",
+            "cuda"
+          ],
+          "description": "Automatically select CUDA or require CUDA explicitly."
+        },
+        "judge_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Reserved judge model; unused by offline SFT/DPO/ORPO/CPO."
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "description": "Dataset source and mapping: hf, local, synthetic, klayer or multi, following run.yaml."
+    },
+    "train_dataset": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional alias for a local training dataset (.jsonl, .parquet, or Dataset Fabric .json manifest)."
+    },
+    "val_dataset": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional independent local validation dataset (.jsonl, .parquet, or Dataset Fabric .json manifest). Must not overlap training files or shards."
+    },
+    "adapter": {
+      "type": "object",
+      "description": "Settings for a NEW adapter. Saved structure is inherited on continuation.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "New adapter kind: lora, qlora or dora."
+        },
+        "rank": {
+          "type": "integer",
+          "description": "New adapter LoRA rank."
+        },
+        "alpha": {
+          "type": "integer",
+          "description": "New adapter LoRA alpha."
+        },
+        "dropout": {
+          "type": "number",
+          "description": "New adapter LoRA dropout."
+        },
+        "quant_bits": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Base model loading precision: 4, 16 or null. Never automatically lowered."
+        },
+        "target_modules": {
+          "type": "array",
+          "description": "New adapter module suffixes.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "optim": {
+      "type": "object",
+      "description": "Optimizer settings; omitted fields use MCP defaults.",
+      "properties": {
+        "learning_rate": {
+          "type": "number",
+          "description": "Learning rate."
+        },
+        "schedule": {
+          "type": "string",
+          "description": "cosine, linear or constant."
+        },
+        "warmup_steps": {
+          "type": "integer",
+          "description": "Optimizer warmup steps."
+        },
+        "weight_decay": {
+          "type": "number",
+          "description": "Weight decay."
+        },
+        "grad_accumulation_steps": {
+          "type": "integer",
+          "description": "Microbatches per optimizer step; effective batch is preserved when micro-batch is reduced."
+        },
+        "gradient_accumulation_steps": {
+          "type": "integer",
+          "description": "Alias for grad_accumulation_steps; conflicting aliases are rejected."
+        }
+      }
+    },
+    "train": {
+      "type": "object",
+      "description": "Training budget and sequence settings.",
+      "properties": {
+        "max_steps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Optimizer step budget; full resume uses a total target."
+        },
+        "epochs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Epoch budget when max_steps is null."
+        },
+        "batch_size": {
+          "type": "integer",
+          "description": "Requested micro-batch size."
+        },
+        "max_seq_len": {
+          "type": "integer",
+          "description": "Maximum sequence length; never automatically reduced."
+        },
+        "save_every": {
+          "type": "integer",
+          "description": "Checkpoint interval in optimizer steps."
+        },
+        "gradient_accumulation_steps": {
+          "type": "integer",
+          "description": "Legacy alias for optim.grad_accumulation_steps."
+        },
+        "packing": {
+          "enum": [
+            "auto",
+            true,
+            false
+          ],
+          "description": "Auto packs sampled short SFT sequences only when boundary isolation is supported."
+        }
+      }
+    },
+    "algo": {
+      "type": "object",
+      "description": "Objective-specific settings.",
+      "properties": {
+        "beta": {
+          "type": "number",
+          "description": "Preference objective beta."
+        },
+        "completion_only_loss": {
+          "type": "boolean",
+          "description": "Train only on assistant completion tokens for SFT (default true)."
+        }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "description": "Execution overrides; do not change training steps, sequence length, rank, or effective batch.",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "auto",
+            "safe",
+            "fast",
+            "custom"
+          ],
+          "description": "Execution profile; default auto."
+        },
+        "gradient_checkpointing": {
+          "enum": [
+            "auto",
+            "unsloth",
+            "standard",
+            "off"
+          ],
+          "description": "Auto keeps Unsloth checkpointing."
+        },
+        "adapter_materialization_device": {
+          "enum": [
+            "auto",
+            "cpu",
+            "cuda"
+          ],
+          "description": "LoRA materialization; CUDA requires verified free-memory headroom."
+        },
+        "merge_shard_size": {
+          "enum": [
+            "auto",
+            "1B",
+            "2B",
+            "4B",
+            "5B"
+          ],
+          "description": "MergeKit shard size in parameter units."
+        },
+        "packing": {
+          "enum": [
+            "auto",
+            true,
+            false
+          ],
+          "description": "Automatic or explicit packing override."
+        },
+        "pin_memory": {
+          "enum": [
+            "auto",
+            true,
+            false
+          ],
+          "description": "Automatic or explicit pin memory override."
+        },
+        "merge_cuda": {
+          "enum": [
+            "auto",
+            true,
+            false
+          ],
+          "description": "Automatic or explicit merge cuda override."
+        },
+        "merge_low_cpu_memory": {
+          "enum": [
+            "auto",
+            true,
+            false
+          ],
+          "description": "Automatic or explicit merge low cpu memory override."
+        },
+        "dataloader_workers": {
+          "anyOf": [
+            {
+              "const": "auto"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "description": "Automatic or explicit dataloader workers count."
+        },
+        "prefetch_factor": {
+          "anyOf": [
+            {
+              "const": "auto"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ],
+          "description": "Automatic or explicit prefetch factor count."
+        },
+        "cpu_threads": {
+          "anyOf": [
+            {
+              "const": "auto"
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ],
+          "description": "Automatic or explicit cpu threads count."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "description": "Output and full-state resumption.",
+      "properties": {
+        "adapter_path": {
+          "type": "string",
+          "description": "Directory for new checkpoints and final adapter."
+        },
+        "resume_from_checkpoint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Full Trainer checkpoint: requires adapter weights, trainer_state.json, optimizer.pt, scheduler.pt and rng_state.pth. Restores global_step; max_steps is the total target. Mutually exclusive with init_adapter."
+        },
+        "resume_from": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Deprecated alias for resume_from_checkpoint; never means weights-only continuation."
+        }
+      }
+    }
+  }
+}

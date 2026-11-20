@@ -45,6 +45,7 @@ pub fn hub_entries(
     guider
         .catalog()
         .iter()
+        .filter(|entry| entry.allows_download())
         .map(|entry| to_hub_entry(entry, vram_mb, ram_mb))
         .collect()
 }

@@ -80,29 +80,36 @@ impl DownloadService {
         if !matches!(purpose, "inference" | "finetune" | "merge") {
             return Err(format!("Unsupported model download purpose: {purpose}"));
         }
-        {
-            let guard = self.active_pid.lock().map_err(|_| "lock")?;
-            if guard.is_some() {
-                return Err("Another model download is already running".into());
+        if repo_id.trim().starts_with('-') {
+            return Err("Invalid repo_id parameter: cannot start with '-'".into());
+        }
+        if let Some(q) = quant {
+            if q.trim().starts_with('-') {
+                return Err("Invalid quant parameter: cannot start with '-'".into());
             }
+        }
+        if let Some(rev) = revision {
+            if rev.trim().starts_with('-') {
+                return Err("Invalid revision parameter: cannot start with '-'".into());
+            }
+        }
+        if let Some(dest) = dest_dir {
+            if dest.trim().starts_with('-') {
+                return Err("Invalid dest_dir parameter: cannot start with '-'".into());
+            }
+        }
+        // Hold the reservation through spawn so concurrent callers cannot both
+        // pass the check and launch competing downloads.
+        let mut active = self.active_pid.lock().unwrap_or_else(|p| p.into_inner());
+        if active.is_some() {
+            return Err("Another model download is already running".into());
         }
 
         let target = dest_dir
             .map(PathBuf::from)
             .unwrap_or_else(default_model_dir);
-        if let Some(existing) = Self::read_status(dest_dir) {
-            if existing.repo_id == repo_id && existing.status != "error" && existing.status != "completed"
-            {
-                return Ok(DownloadStart {
-                    op_id: Uuid::new_v4().to_string(),
-                    pid: None,
-                    dest_dir: target,
-                    status: existing.status.clone(),
-                    download_status: Some(existing),
-                    message: "Download already in progress".into(),
-                });
-            }
-        }
+        // A status file can survive a crash or application restart. The
+        // in-process reservation, not that file, determines whether a job runs.
 
         let python = EnvProvisioner::new(&self.workspace)
             .ensure_download()
@@ -145,15 +152,15 @@ impl DownloadService {
             .spawn()
             .map_err(|e| format!("Failed to launch download script: {e}"))?;
         let pid = child.id();
-        *self.active_pid.lock().map_err(|_| "lock")? = Some(pid);
+        *active = Some(pid);
+        drop(active);
 
         let pid_ref = self.active_pid.clone();
         thread::spawn(move || {
             let _ = child.wait();
-            if let Ok(mut g) = pid_ref.lock() {
-                if *g == Some(pid) {
-                    *g = None;
-                }
+            let mut g = pid_ref.lock().unwrap_or_else(|p| p.into_inner());
+            if *g == Some(pid) {
+                *g = None;
             }
         });
 
@@ -168,7 +175,7 @@ impl DownloadService {
     }
 
     pub fn cancel(&self, dest_dir: Option<&str>) -> Result<(), String> {
-        if let Some(pid) = self.active_pid.lock().map_err(|_| "lock")?.take() {
+        if let Some(pid) = self.active_pid.lock().unwrap_or_else(|p| p.into_inner()).take() {
             kill_process_tree(pid);
         }
         let status_file = Self::status_path(dest_dir);
@@ -179,10 +186,9 @@ impl DownloadService {
     }
 
     pub fn shutdown(&self) {
-        if let Ok(mut g) = self.active_pid.lock() {
-            if let Some(pid) = g.take() {
-                kill_process_tree(pid);
-            }
+        let mut g = self.active_pid.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(pid) = g.take() {
+            kill_process_tree(pid);
         }
     }
 }

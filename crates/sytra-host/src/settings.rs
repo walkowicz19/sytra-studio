@@ -89,6 +89,25 @@ impl AppSettings {
         workspace.join(".sytra-settings.json")
     }
 
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=2_097_152).contains(&self.default_context_window) {
+            return Err("Default context window must be between 1 and 2097152".into());
+        }
+        if !self.default_temperature.is_finite() || !(0.0..=2.0).contains(&self.default_temperature) {
+            return Err("Default temperature must be between 0 and 2".into());
+        }
+        if !matches!(self.kv_cache_quant.as_str(), "fp16" | "q8_0" | "q4_0") {
+            return Err("KV cache quant must be fp16, q8_0, or q4_0".into());
+        }
+        if self.vram_limit_mb == Some(0) {
+            return Err("VRAM limit must be positive".into());
+        }
+        if self.vram_expert_cache_mb == Some(0) {
+            return Err("VRAM expert cache must be positive".into());
+        }
+        Ok(())
+    }
+
     pub fn load(workspace: &Path) -> Self {
         std::fs::read_to_string(Self::path(workspace))
             .ok()
@@ -97,8 +116,21 @@ impl AppSettings {
     }
 
     pub fn save(&self, workspace: &Path) -> Result<(), String> {
+        self.validate()?;
+        let path = Self::path(workspace);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            let temp = parent.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
+            let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+            std::fs::write(&temp, json).map_err(|e| e.to_string())?;
+            if let Err(err) = std::fs::rename(&temp, &path) {
+                let _ = std::fs::remove_file(&temp);
+                return Err(err.to_string());
+            }
+            return Ok(());
+        }
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        std::fs::write(Self::path(workspace), json).map_err(|e| e.to_string())
+        std::fs::write(path, json).map_err(|e| e.to_string())
     }
 
     /// The HF cache directory runs should use, created if missing.
@@ -116,6 +148,79 @@ impl AppSettings {
             .unwrap_or(detected_mb)
             .clamp(2048, detected_mb.max(2048))
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InferenceSettingsInput {
+    pub default_context_window: Option<usize>,
+    pub default_temperature: Option<f32>,
+    pub enable_flash_attention: Option<bool>,
+    pub kv_cache_quant: Option<String>,
+    pub vram_limit_mb: Option<Option<u64>>,
+    pub cpu_kv_cache: Option<bool>,
+    pub vram_expert_cache_mb: Option<Option<u64>>,
+}
+
+pub fn settings_payload(
+    settings: &AppSettings,
+    workspace: &Path,
+    detected_ram_mb: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "hf_cache_dir": settings.effective_hf_cache(workspace).display().to_string(),
+        "is_custom": settings.hf_cache_dir.is_some(),
+        "main_memory_limit_mb": settings.main_memory_limit_mb,
+        "effective_main_memory_mb": settings.effective_main_memory_mb(detected_ram_mb),
+        "detected_ram_mb": detected_ram_mb,
+        "default_context_window": settings.default_context_window,
+        "default_temperature": settings.default_temperature,
+        "enable_flash_attention": settings.enable_flash_attention,
+        "kv_cache_quant": settings.kv_cache_quant,
+        "vram_limit_mb": settings.vram_limit_mb,
+        "cpu_kv_cache": settings.cpu_kv_cache,
+        "vram_expert_cache_mb": settings.vram_expert_cache_mb,
+        "memory_limit_note": "main_memory_limit_mb gates preflight estimates only; it does not cap process RSS.",
+    })
+}
+
+pub fn apply_inference_settings(
+    workspace: &Path,
+    detected_ram_mb: u64,
+    input: InferenceSettingsInput,
+) -> Result<serde_json::Value, String> {
+    let mut current = AppSettings::load(workspace);
+    if let Some(ctx) = input.default_context_window {
+        current.default_context_window = ctx;
+    }
+    if let Some(temp) = input.default_temperature {
+        current.default_temperature = temp;
+    }
+    if let Some(fa) = input.enable_flash_attention {
+        current.enable_flash_attention = fa;
+    }
+    if let Some(kv) = input.kv_cache_quant {
+        current.kv_cache_quant = kv;
+    }
+    if let Some(vram) = input.vram_limit_mb {
+        if let (Some(requested), Some(detected)) =
+            (vram, crate::BackendResolver::detect_system_vram_mb())
+        {
+            if requested > detected {
+                return Err(format!(
+                    "VRAM limit ({requested} MB) exceeds detected GPU VRAM ({detected} MB)"
+                ));
+            }
+        }
+        current.vram_limit_mb = vram;
+    }
+    if let Some(cpu_kv) = input.cpu_kv_cache {
+        current.cpu_kv_cache = cpu_kv;
+    }
+    if let Some(expert_cache) = input.vram_expert_cache_mb {
+        current.vram_expert_cache_mb = expert_cache;
+    }
+    current.save(workspace)?;
+    Ok(settings_payload(&current, workspace, detected_ram_mb))
 }
 
 #[cfg(test)]
@@ -199,6 +304,36 @@ mod tests {
         .map(String::from)
         .collect();
         assert_eq!(keys, expected_keys);
+        std::fs::remove_dir_all(&ws).ok();
+    }
+
+    #[test]
+    fn save_validates_and_preserves_prior_settings_on_error() {
+        let ws = std::env::temp_dir().join(format!("sytra-settings-validate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let valid = AppSettings {
+            default_context_window: 16384,
+            default_temperature: 0.3,
+            kv_cache_quant: "q4_0".into(),
+            ..Default::default()
+        };
+        valid.save(&ws).unwrap();
+
+        let mut bad = valid.clone();
+        bad.default_temperature = 2.5;
+        assert!(bad.save(&ws).is_err());
+
+        bad = valid.clone();
+        bad.kv_cache_quant = "invalid".into();
+        assert!(bad.save(&ws).is_err());
+
+        bad = valid.clone();
+        bad.vram_limit_mb = Some(0);
+        assert!(bad.save(&ws).is_err());
+
+        let reloaded = AppSettings::load(&ws);
+        assert_eq!(reloaded.default_context_window, 16384);
+        assert_eq!(reloaded.kv_cache_quant, "q4_0");
         std::fs::remove_dir_all(&ws).ok();
     }
 }

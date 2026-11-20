@@ -11,7 +11,7 @@ pub enum ResourceError {
         estimated_mb: u64,
         available_mb: u64,
     },
-    #[error("Estimated merge RAM ({estimated_mb} MB) exceeds available hardware RAM ({available_mb} MB)")]
+    #[error("Estimated RAM ({estimated_mb} MB) exceeds available hardware RAM ({available_mb} MB)")]
     RamOverflow {
         estimated_mb: u64,
         available_mb: u64,
@@ -23,6 +23,8 @@ pub enum ResourceError {
     },
     #[error("Hardware memory could not be detected; refusing to estimate or start the operation")]
     UnknownHardware,
+    #[error("Cannot estimate Helix training resources: {0}")]
+    InvalidHelix(String),
 }
 
 pub struct ResourceGuard {
@@ -38,6 +40,24 @@ impl ResourceGuard {
             total_ram_mb,
             available_disk_mb,
         }
+    }
+
+    pub fn check_helix_train(&self, spec: &TrainSpec) -> Result<(), ResourceError> {
+        use sytra_contracts::run_config::BackendKind;
+        if !matches!(spec.config.backend.kind, BackendKind::Cpu | BackendKind::Cuda) {
+            return Err(ResourceError::InvalidHelix("Helix supports CPU and CUDA only".into()));
+        }
+        if self.total_ram_mb == 0 || (spec.config.backend.kind == BackendKind::Cuda && self.total_vram_mb == 0) {
+            return Err(ResourceError::UnknownHardware);
+        }
+        let (vram, ram) = crate::helix_guard::estimate(spec).map_err(ResourceError::InvalidHelix)?;
+        if ram > self.total_ram_mb {
+            return Err(ResourceError::RamOverflow { estimated_mb: ram, available_mb: self.total_ram_mb });
+        }
+        if spec.config.backend.kind == BackendKind::Cuda && vram > self.total_vram_mb {
+            return Err(ResourceError::VramOverflow { estimated_mb: vram, available_mb: self.total_vram_mb });
+        }
+        Ok(())
     }
 
     /// Estimates training VRAM in MB.
@@ -70,7 +90,7 @@ impl ResourceGuard {
     /// Estimates merge RAM and disk usage in MB.
     pub fn estimate_merge_cost(
         models: &[&ModelCatalogEntry],
-        _method: MergeMethod,
+        method: MergeMethod,
         out_of_core: bool,
     ) -> (u64, u64) {
         // Compute sum of parameters of input models
@@ -91,7 +111,7 @@ impl ResourceGuard {
         };
 
         // Disk space requirement: we need space for the final merged model + temp workspace
-        let final_model_size_mb = first_model_size_mb;
+        let final_model_size_mb = if method == MergeMethod::Moe { total_size_mb } else { first_model_size_mb };
         let disk_mb = if out_of_core {
             // Needs temporary workspace disk space as well
             total_size_mb + final_model_size_mb + 4096
@@ -108,6 +128,20 @@ impl ResourceGuard {
         model: &ModelCatalogEntry,
         spec: &TrainSpec,
     ) -> Result<(), ResourceError> {
+        if spec.config.backend.kind == sytra_contracts::run_config::BackendKind::Cpu {
+            if self.total_ram_mb == 0 {
+                return Err(ResourceError::UnknownHardware);
+            }
+            let est_ram = (model.param_count * 2) / (1024 * 1024) + 2048;
+            if est_ram > self.total_ram_mb {
+                return Err(ResourceError::RamOverflow {
+                    estimated_mb: est_ram,
+                    available_mb: self.total_ram_mb,
+                });
+            }
+            return Ok(());
+        }
+
         if self.total_vram_mb == 0 {
             return Err(ResourceError::UnknownHardware);
         }
@@ -163,12 +197,15 @@ mod tests {
         let model = guider.catalog().first().expect("catalog");
         let spec = TrainSpec {
             config: sytra_contracts::run_config::RunConfig {
+                train_dataset: None,
+                val_dataset: None,
+                init_adapter: None, performance: Default::default(),
                 version: 1,
                 run_id: None,
                 train_mode: sytra_contracts::run_config::TrainMode::Sft,
                 model: model.model_id.clone(),
                 backend: sytra_contracts::run_config::BackendConfig {
-                    kind: sytra_contracts::run_config::BackendKind::Cpu,
+                    kind: sytra_contracts::run_config::BackendKind::Cuda,
                     judge_model: None,
                 },
                 data: sytra_contracts::run_config::DataSpec::Hf {
@@ -182,6 +219,8 @@ mod tests {
                     },
                 },
                 adapter: sytra_contracts::run_config::AdapterConfig {
+                    use_rslora: false,
+                    moe_topology: "attention".into(),
                     kind: AdapterType::Lora,
                     rank: 16,
                     alpha: 32,
@@ -190,6 +229,8 @@ mod tests {
                     quant_bits: None,
                 },
                 optim: sytra_contracts::run_config::OptimConfig {
+                    router_lr_ratio: None,
+                    router_aux_coef: None,
                     learning_rate: 2e-4,
                     schedule: sytra_contracts::run_config::Schedule::Cosine,
                     warmup_steps: 20,
@@ -197,12 +238,13 @@ mod tests {
                     grad_accumulation_steps: 8,
                 },
                 train: sytra_contracts::run_config::TrainParams {
+                    neftune_noise_alpha: None,
                     max_steps: Some(10),
                     epochs: None,
                     batch_size: 2,
                     max_seq_len: 2048,
                     save_every: 2,
-                    packing: false,
+                    packing: sytra_contracts::run_config::Packing::Enabled(false),
                 },
                 algo: Default::default(),
                 output: sytra_contracts::run_config::RunOutput {

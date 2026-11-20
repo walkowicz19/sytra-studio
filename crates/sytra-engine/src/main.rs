@@ -8,7 +8,7 @@ use sytra_engine::{
     plan_memory_envelope_with_capabilities, validate_compiled_contract, validate_forward_contract,
     validate_model_config, verify_kimi_oracle, verify_mixtral_oracle, Accelerator, ActivationKind,
     AttentionKind, CudaAccelerator, DenseTensorStore, ExpertKey, ExpertStore, GenerationConfig,
-    GenerationRuntime, IoPerformanceEstimate, KimiK27Config, KimiRuntime, KimiRuntimeOptions,
+    GenerationRuntime, HelixExecutionPlan, IoPerformanceEstimate, KimiK27Config, KimiRuntime, KimiRuntimeOptions,
     MemoryEnvelope, MixtralRuntime, MixtralRuntimeOptions, ModelGenerator, ModelTokenizer,
     NoAccelerator, OpenAiDraftModel, OpenAiServer, OracleSuite, PackedInt4Bf16View,
     PackedInt4Matrix, ResidencyManager, ResidentTensor, RuntimeCompletionBackend, RuntimeManifest,
@@ -30,6 +30,7 @@ struct PlacementSummary {
     storage_expert_bytes: u64,
     memory_envelope: MemoryEnvelope,
     io_performance: IoPerformanceEstimate,
+    helix_plan: HelixExecutionPlan,
 }
 
 fn usage() {
@@ -51,6 +52,7 @@ fn usage() {
          sytra-engine list-adapters\n\
          sytra-engine serve --model PATH [--host HOST] [--port N] [--served-model-name NAME]\n\
              [--max-concurrent-requests N] [--cuda-device N]\n\
+             [--allow-unverified-checkpoint]\n\
              [--draft-url http://127.0.0.1:PORT] [--draft-model NAME] [--draft-timeout-ms N]"
     );
 }
@@ -334,7 +336,11 @@ fn doctor(args: &[String]) -> Result<(), String> {
         }
     }
     let forward_compiled = validate_forward_contract(&manifest).is_ok();
-    let oracle = if forward_compiled {
+    let allow_unverified = args
+        .iter()
+        .any(|arg| arg == "--allow-unverified-checkpoint");
+    let has_oracle = root.join(sytra_engine::ORACLE_FILE).is_file();
+    let oracle = if forward_compiled && (has_oracle || !allow_unverified) {
         Some(
             verify_runtime_oracle(args, &root, &manifest, &memory)?
                 .report()
@@ -343,7 +349,23 @@ fn doctor(args: &[String]) -> Result<(), String> {
     } else {
         None
     };
-    let ready = forward_compiled && memory.feasible && oracle.is_some();
+    let unverified_runtime_ready = if forward_compiled && allow_unverified && !has_oracle {
+        match manifest.architecture.adapter.as_str() {
+            sytra_engine::kimi_k27::ADAPTER_ID => {
+                build_kimi_runtime(args, &root, &manifest, &memory)?;
+                true
+            }
+            "sytra-mixtral" | "sytra-qwen3-moe" | "sytra-qwen2-moe" | "sytra-olmoe"
+            | "sytra-granite-moe" => {
+                build_mixtral_runtime(args, &root, &manifest, &memory)?;
+                true
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+    let ready = forward_compiled && memory.feasible && (oracle.is_some() || unverified_runtime_ready);
     println!(
         "{}",
         serde_json::json!({
@@ -353,11 +375,14 @@ fn doctor(args: &[String]) -> Result<(), String> {
             "adapter": manifest.architecture.adapter,
             "compiled_forward_kernel": forward_compiled,
             "metadata_forward_verified_ignored": manifest.architecture.forward_verified,
+            "oracle_verified": oracle.is_some(),
             "checkpoint_oracle": oracle,
             "experts_indexed": manifest.storage.experts.len(),
             "dense_tensors_indexed": manifest.storage.dense_tensors.len(),
-            "note": if ready {
+            "note": if oracle.is_some() {
                 "compiled kernel passed the checkpoint-bound runtime oracle"
+            } else if unverified_runtime_ready {
+                "compiled kernel initialized storage and tensor contracts (unverified without .sytra-oracle.json)"
             } else {
                 "storage is valid, but serving remains locked without a compiled kernel and passing runtime oracle"
             }
@@ -723,8 +748,8 @@ fn plan(args: &[String]) -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     let summary = PlacementSummary {
-        adapter: manifest.architecture.adapter,
-        model_type: manifest.architecture.model_type,
+        adapter: manifest.architecture.adapter.clone(),
+        model_type: manifest.architecture.model_type.clone(),
         forward_verified: manifest.architecture.forward_verified,
         dense_bytes: manifest.dense_bytes,
         expert_bytes,
@@ -734,6 +759,7 @@ fn plan(args: &[String]) -> Result<(), String> {
         accelerator_expert_budget_bytes: accelerator_expert.min(expert_bytes),
         storage_dense_bytes: manifest.dense_bytes.saturating_sub(guaranteed_cached_dense),
         storage_expert_bytes: expert_bytes.saturating_sub(guaranteed_cached_experts),
+        helix_plan: HelixExecutionPlan::from_manifest(&manifest, ram_limit, accelerator_limit),
         memory_envelope,
         io_performance,
     };
@@ -800,25 +826,59 @@ fn serve(args: &[String]) -> Result<(), String> {
         ));
     }
     validate_forward_contract(&manifest).map_err(|error| error.to_string())?;
-    let verified = verify_runtime_oracle(args, &root, &manifest, &memory)?;
     let tokenizer = ModelTokenizer::load(&root).map_err(|error| error.to_string())?;
-    match verified {
-        VerifiedRuntime::Kimi(runtime, oracle) => serve_verified(
-            args,
-            &root,
-            Arc::new(runtime),
-            oracle,
-            tokenizer,
-            manifest.architecture.adapter,
-        ),
-        VerifiedRuntime::Mixtral(runtime, oracle) => serve_verified(
-            args,
-            &root,
-            Arc::new(runtime),
-            oracle,
-            tokenizer,
-            manifest.architecture.adapter,
-        ),
+    let allow_unverified = args
+        .iter()
+        .any(|arg| arg == "--allow-unverified-checkpoint");
+    let has_oracle = root.join(sytra_engine::ORACLE_FILE).is_file();
+    if has_oracle || !allow_unverified {
+        let verified = verify_runtime_oracle(args, &root, &manifest, &memory)?;
+        return match verified {
+            VerifiedRuntime::Kimi(runtime, oracle) => serve_verified(
+                args,
+                &root,
+                Arc::new(runtime),
+                Some(oracle),
+                tokenizer,
+                manifest.architecture.adapter,
+            ),
+            VerifiedRuntime::Mixtral(runtime, oracle) => serve_verified(
+                args,
+                &root,
+                Arc::new(runtime),
+                Some(oracle),
+                tokenizer,
+                manifest.architecture.adapter,
+            ),
+        };
+    }
+    match manifest.architecture.adapter.as_str() {
+        sytra_engine::kimi_k27::ADAPTER_ID => {
+            let runtime = build_kimi_runtime(args, &root, &manifest, &memory)?;
+            serve_verified(
+                args,
+                &root,
+                Arc::new(runtime),
+                None,
+                tokenizer,
+                manifest.architecture.adapter,
+            )
+        }
+        "sytra-mixtral" | "sytra-qwen3-moe" | "sytra-qwen2-moe" | "sytra-olmoe"
+        | "sytra-granite-moe" => {
+            let runtime = build_mixtral_runtime(args, &root, &manifest, &memory)?;
+            serve_verified(
+                args,
+                &root,
+                Arc::new(runtime),
+                None,
+                tokenizer,
+                manifest.architecture.adapter,
+            )
+        }
+        adapter => Err(format!(
+            "{adapter} has no compiled forward executor in this build"
+        )),
     }
 }
 
@@ -861,8 +921,8 @@ fn benchmark_verified<R: GenerationRuntime>(
     adapter: &str,
     oracle: &sytra_engine::OracleReport,
 ) -> Result<(), String> {
-    if tokenizer.vocab_size() != runtime.generation_vocab_size() {
-        return Err("tokenizer vocabulary does not match the benchmark runtime".into());
+    if tokenizer.vocab_size() == 0 || tokenizer.vocab_size() > runtime.generation_vocab_size() {
+        return Err("tokenizer vocabulary exceeds the benchmark runtime vocabulary".into());
     }
     let prompt = value(args, "--prompt").unwrap_or_else(|| "Hello".into());
     let prompt_tokens = tokenizer
@@ -956,13 +1016,13 @@ fn serve_verified<R: GenerationRuntime + Send + Sync + 'static>(
     args: &[String],
     root: &PathBuf,
     runtime: Arc<R>,
-    oracle: sytra_engine::OracleReport,
+    oracle: Option<sytra_engine::OracleReport>,
     tokenizer: ModelTokenizer,
     adapter: String,
 ) -> Result<(), String> {
-    if tokenizer.vocab_size() != runtime.generation_vocab_size() {
+    if tokenizer.vocab_size() == 0 || tokenizer.vocab_size() > runtime.generation_vocab_size() {
         return Err(format!(
-            "tokenizer vocabulary size {} does not match model vocabulary size {}",
+            "tokenizer vocabulary size {} exceeds model vocabulary size {}",
             tokenizer.vocab_size(),
             runtime.generation_vocab_size()
         ));
@@ -1007,6 +1067,7 @@ fn serve_verified<R: GenerationRuntime + Send + Sync + 'static>(
             "bind": bind,
             "model": model_id,
             "adapter": adapter,
+            "oracle_verified": oracle.is_some(),
             "oracle": oracle,
             "runtime": health,
             "max_concurrent_requests": max_concurrent_requests,

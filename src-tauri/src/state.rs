@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use sytra_contracts::guider::Guider;
-use sytra_host::{ChatServer, DownloadService, JobRunner, ResourceGuard, RunArchive};
+use sytra_host::{ChatServer, DownloadService, JobRunner, ResourceGuard, RunArchive, VoiceService};
 
 pub struct AppState {
     pub archive: Mutex<RunArchive>,
@@ -12,4 +12,5 @@ pub struct AppState {
     pub workspace: PathBuf,
     pub downloads: DownloadService,
     pub chat: ChatServer,
+    pub voice: VoiceService,
 }

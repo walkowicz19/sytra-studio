@@ -184,6 +184,7 @@ class LlamaCppOffloadPlan:
     ubatch: int
     strategy: str
     notes: tuple[str, ...]
+    cpu_moe: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -198,78 +199,79 @@ def plan_llama_cpp_offload(
     kv_bytes: int | None,
     cpu_count: int,
     windows: bool,
+    cpu_kv_cache: bool = False,
+    force_gpu_layers: int | None = None,
+    layer_sizes: list[int] | None = None,
+    expert_sizes: list[int] | None = None,
+    cpu_moe: bool = False,
 ) -> LlamaCppOffloadPlan:
-    """GPU-first hybrid: fill VRAM with layers, keep the rest mmap'd in RAM.
-
-    20% of the VRAM budget is reserved for KV, CUDA context, and activations.
-    15% of the RAM budget is reserved for the OS and llama.cpp working set.
-    mlock is never enabled on Windows — it causes page-file thrashing on 16 GB PCs.
-    """
+    """Reserve KV and runtime headroom before placing whole transformer blocks."""
     if weight_bytes <= 0 or vram_budget_mb <= 0 or ram_budget_mb < 0:
         raise ValueError("invalid llama.cpp offload budget")
-
-    vram_weight_budget = int(vram_budget_mb * MIB * 0.80)
-    ram_weight_budget = int(ram_budget_mb * MIB * 0.85)
-    kv = kv_bytes or 0
-    notes: list[str] = []
-    threads = max(2, min(8, (cpu_count or 4) // 2 or 2))
-    batch, ubatch = 512, 128
-    mmap = True
-    mlock = False
+    if force_gpu_layers is not None and force_gpu_layers < 0:
+        raise ValueError("GPU layers cannot be negative")
+    vram, ram = vram_budget_mb * MIB, ram_budget_mb * MIB
+    # Unknown KV needs explicit reserve; it must not be reported as zero cost.
+    kv = kv_bytes if kv_bytes is not None else min(512 * MIB, vram // 4)
+    gpu_kv, ram_kv = (0, kv) if cpu_kv_cache else (kv, 0)
+    gpu_overhead, ram_overhead = math.ceil(vram * .20), math.ceil(ram * .15)
+    weight_budget = max(0, vram - gpu_overhead - gpu_kv)
+    notes = ["Estimates reserve KV cache and runtime headroom before assigning weights."]
     if windows:
-        notes.append("Windows: mmap on, mlock off to avoid page-file thrashing under a 12 GB RAM cap.")
-
+        notes.append("Windows: mmap on, mlock off to avoid page-file thrashing.")
+    cpu_count = max(1, cpu_count)
+    threads = max(1, min(8, cpu_count // 2))
     if n_layer and n_layer > 0:
-        embedding_share = int(weight_bytes * 0.08)
-        layer_bytes = max(1, (weight_bytes - embedding_share) // n_layer)
-        gpu_layers = min(n_layer, vram_weight_budget // layer_bytes)
-        if gpu_layers <= 0 and vram_weight_budget > embedding_share:
-            gpu_layers = 1
-        cpu_layers = max(n_layer - gpu_layers, 0)
-        ngl = gpu_layers
-    else:
-        n_layer = None
-        if weight_bytes <= vram_weight_budget:
-            gpu_layers, cpu_layers, ngl = 99, 0, 99
+        if layer_sizes is None:
+            # Conservative equal-block fallback includes embeddings in the per-layer share.
+            layers = [math.ceil(weight_bytes / n_layer)] * n_layer
+            # Metadata-free estimates are advisory; actual allocation is checked by llama.cpp.
         else:
-            ratio = vram_weight_budget / weight_bytes
-            ngl = max(1, int(99 * ratio))
-            gpu_layers, cpu_layers = ngl, max(99 - ngl, 0)
-        notes.append("GGUF header has no block_count; GPU layer count is size-proportional.")
-
-    gpu_weight = min(weight_bytes, vram_weight_budget)
-    ram_weight = max(weight_bytes - gpu_weight, 0)
-    peak_vram = (gpu_weight + kv + int(0.20 * vram_budget_mb * MIB) + MIB - 1) // MIB
-    peak_ram = (ram_weight + int(0.15 * ram_budget_mb * MIB) + MIB - 1) // MIB
-    if ram_weight > ram_weight_budget:
-        strategy = "insufficient-memory"
-        notes.append(
-            "Weights plus KV exceed the conservative GPU+RAM envelope; "
-            "choose a smaller GGUF quant or a shorter context."
-        )
-    elif cpu_layers:
-        strategy = "gpu-first-hybrid"
-        notes.append(
-            f"Keep {gpu_layers} transformer blocks on GPU; mmap the remaining {cpu_layers} in RAM."
-        )
+            layers = list(layer_sizes)
+            if len(layers) != n_layer or sum(layers) > weight_bytes:
+                raise ValueError("Invalid GGUF layer sizes")
+        if cpu_moe:
+            if expert_sizes is None or len(expert_sizes) != n_layer:
+                raise ValueError("CPU MoE placement requires verified expert tensor sizes")
+            layers = [total - expert for total, expert in zip(layers, expert_sizes)]
+            if any(size < 0 for size in layers):
+                raise ValueError("Expert bytes exceed layer bytes")
+        gpu_layers, gpu_weight = 0, 0
+        for size in reversed(layers):  # llama.cpp offloads the last N blocks.
+            if gpu_weight + size > weight_budget:
+                break
+            gpu_weight += size
+            gpu_layers += 1
+        if force_gpu_layers is not None:
+            gpu_layers = min(force_gpu_layers, n_layer)
+            gpu_weight = sum(layers[-gpu_layers:]) if gpu_layers else 0
+            if force_gpu_layers > n_layer:
+                gpu_weight += max(0, weight_bytes - sum(layer_sizes or layers))
+        gpu_weight = min(weight_bytes, gpu_weight)
+        ngl = force_gpu_layers if force_gpu_layers is not None else gpu_layers
+        cpu_layers = n_layer - gpu_layers
     else:
-        strategy = "gpu-resident"
-        notes.append("All transformer blocks fit the VRAM weight budget.")
-
-    return LlamaCppOffloadPlan(
-        gpu_layers=ngl,
-        cpu_layers=cpu_layers,
-        n_layer=n_layer,
-        peak_vram_mb=peak_vram,
-        peak_ram_mb=peak_ram,
-        mmap=mmap,
-        mlock=mlock,
-        threads=threads,
-        batch=batch,
-        ubatch=ubatch,
-        strategy=strategy,
-        notes=tuple(notes),
-    )
+        # No block metadata: do not invent a proportional layer count (99 is not a layer count).
+        fits = weight_bytes <= weight_budget
+        ngl = force_gpu_layers if force_gpu_layers is not None else (99 if fits else 0)
+        gpu_weight = weight_bytes if ngl else 0
+        gpu_layers, cpu_layers = ngl, 0
+        notes.append("No block metadata: only full GPU placement or CPU placement can be estimated.")
+    ram_weight = weight_bytes - gpu_weight
+    peak_vram = math.ceil((gpu_weight + gpu_kv + gpu_overhead) / MIB)
+    peak_ram = math.ceil((ram_weight + ram_kv + ram_overhead) / MIB)
+    if peak_vram > vram_budget_mb or peak_ram > ram_budget_mb:
+        strategy = "insufficient-memory"
+        notes.append("Weights, KV, and runtime headroom exceed the GPU+RAM budget; choose a smaller model or explicitly shorter context.")
+    elif ngl == 0:
+        strategy = "cpu-only"
+    elif cpu_moe:
+        strategy = "moe-cpu-experts"
+        notes.append("All routed expert weights stay in RAM; supported dense blocks use the GPU. All selected experts are computed.")
+    else:
+        strategy = "gpu-first-hybrid" if cpu_layers or ram_weight else "gpu-resident"
+    return LlamaCppOffloadPlan(ngl, cpu_layers, n_layer, peak_vram, peak_ram, True, False,
+                               threads, 512, 128, strategy, tuple(notes), cpu_moe)
 
 
 def estimate_streamed_moe_tps(

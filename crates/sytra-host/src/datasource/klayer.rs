@@ -206,7 +206,9 @@ impl KlayerMcpClient {
         let (program, args) = argv.split_first().ok_or_else(|| {
             DataSourceError::InvalidSpec("klayer MCP command is empty".into())
         })?;
-        let mut child = Command::new(program)
+        let mut cmd = Command::new(program);
+        crate::apply_hidden_window(&mut cmd);
+        let mut child = cmd
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -238,7 +240,7 @@ impl KlayerMcpClient {
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": { "name": "sytra-studio", "version": "1.2.0" }
+                "clientInfo": { "name": "sytra-studio", "version": env!("CARGO_PKG_VERSION") }
             }),
         )?;
         self.notify("notifications/initialized", json!({}))

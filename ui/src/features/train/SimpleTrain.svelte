@@ -5,14 +5,14 @@
    * hardware), and a quality preset. Everything else is derived.
    */
   import { onMount } from 'svelte'
-  import { run, resetRun, pushToast, hwStore } from '../../store.svelte'
+  import { run, resetRun, pushToast, hwStore, trainFormStore, uiMode, toggleUiMode } from '../../store.svelte'
   import { t } from '../../i18n.svelte'
   import { api } from '../../api'
   import { startWatchedOp } from '../shared/startWatchedOp'
 
   // ── Step 1: data ──────────────────────────────────────────────────────
   let dataKind = $state<'file' | 'hf'>('file')
-  let filePath = $state('')
+  let filePath = $state(trainFormStore.localPath)
   let hfRepoId = $state('')
   let previewRows = $state<string[][] | null>(null)
   let previewLoading = $state(false)
@@ -33,10 +33,21 @@
     }
   }
 
-  function fileFormat(path: string): 'jsonl' | 'csv' | 'parquet' {
+  async function browseValidation() {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const picked = await open({ multiple: false, filters: [{ name: 'Datasets', extensions: ['jsonl', 'parquet', 'json'] }] })
+      if (typeof picked === 'string') trainFormStore.validationPath = picked
+    } catch {
+      pushToast('error', t('teach.pickerFailed'))
+    }
+  }
+
+  function fileFormat(path: string): 'jsonl' | 'csv' | 'parquet' | 'manifest' {
     const ext = path.split('.').pop()?.toLowerCase()
     if (ext === 'csv') return 'csv'
     if (ext === 'parquet') return 'parquet'
+    if (ext === 'json') return 'manifest'
     return 'jsonl'
   }
 
@@ -132,6 +143,7 @@
       model: selectedRecipe.model_id,
       backend: { kind: 'auto' },
       data: dataSpec(),
+      val_dataset: trainFormStore.validationPath.trim() || undefined,
       adapter: {
         type: selectedRecipe.adapter_type || 'lora',
         rank: p.rank,
@@ -139,9 +151,11 @@
         dropout: 0.05,
         target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj'],
         quant_bits: selectedRecipe.quant_bits ?? null,
+        use_rslora: true,
       },
       optim: { learning_rate: 2e-4, schedule: 'cosine', warmup_steps: 20, weight_decay: 0.0, grad_accumulation_steps: 8 },
-      train: { max_steps: p.steps, batch_size: 2, max_seq_len: 2048, save_every: p.save, packing: false },
+      train: { max_steps: p.steps, batch_size: 2, max_seq_len: 2048, save_every: p.save, packing: 'auto' },
+      performance: { mode: 'auto' },
       output: { adapter_path: `runs/adapter-${Date.now()}` },
     }
 
@@ -166,6 +180,10 @@
 
   <div class="simple-scroll">
     <div class="simple-flow">
+
+      <button class="btn btn-ghost" onclick={() => { trainFormStore.workflow = 'continue'; if (!uiMode.advanced) toggleUiMode() }}>
+        Post-train from an existing adapter
+      </button>
 
       <!-- 01 · Data -->
       <section class="step">
@@ -200,6 +218,15 @@
         {:else}
           <input class="input" placeholder={t('teach.hfPlaceholder')} bind:value={hfRepoId} />
         {/if}
+
+        <div class="field" style="margin-top:var(--space-4)">
+          <label class="field-label" for="simple-validation">Validation dataset (optional)</label>
+          <div class="file-row">
+            <input id="simple-validation" class="input input-mono" bind:value={trainFormStore.validationPath} placeholder="Workspace path to .jsonl, .parquet, or .json manifest" />
+            <button class="btn btn-secondary" onclick={browseValidation}>Choose file</button>
+          </div>
+          <span class="field-hint">Use a separate file within the workspace for evaluation during training.</span>
+        </div>
 
         {#if dataReady}
           <button class="btn btn-ghost btn-sm" onclick={previewData} disabled={previewLoading}>

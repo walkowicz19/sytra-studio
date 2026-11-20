@@ -15,6 +15,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
+from .runtime_detect import find_sytra_engine
+from .subprocess_utils import silent_subprocess_kwargs
+
 
 ORACLE_FILE = ".sytra-oracle.json"
 SUPPORTED_ADAPTERS = {
@@ -50,7 +53,7 @@ def _engine_command(raw: str | None) -> list[str]:
         command = shlex.split(raw, posix=os.name != "nt")
         if command:
             return command
-    executable = shutil.which("sytra-engine") or shutil.which("sytra-engine.exe")
+    executable = find_sytra_engine() or shutil.which("sytra-engine") or shutil.which("sytra-engine.exe")
     if executable:
         return [executable]
     raise OracleGenerationError(
@@ -64,6 +67,7 @@ def _checkpoint_fingerprint(model: Path, engine: Sequence[str]) -> str:
         check=False,
         capture_output=True,
         text=True,
+        **silent_subprocess_kwargs(),
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()

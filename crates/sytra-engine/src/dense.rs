@@ -3,6 +3,7 @@
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::manifest::{decode_packed_shape, validate_packed_shape_segment};
 use crate::{decode_float_values, DenseMatrix, DenseTensorStore, TensorStoreError};
 
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -169,13 +170,14 @@ pub fn tiled_f32_matmul(
     })
 }
 
-/// Multiply an exact compressed-tensors packed symmetric INT4 group-32
+/// Multiply an exact compressed-tensors packed symmetric INT4 groupwise
 /// matrix by a position-major FP32 batch. Packed rows and BF16 scale rows are
 /// streamed together under one host tile budget; the full matrix is never
 /// materialized or dequantized.
-pub fn tiled_packed_int4_group32_bf16_matmul<F>(
+pub fn tiled_packed_int4_bf16_matmul<F>(
     store: &DenseTensorStore,
     tensor: &str,
+    group_size: usize,
     tile_bytes: u64,
     positions: usize,
     input: &[f32],
@@ -201,25 +203,21 @@ where
     let shape = store
         .metadata(&shape_name)
         .ok_or_else(|| TensorStoreError::Unknown(shape_name.clone()))?;
-    if shape.dtype.as_deref() != Some("I32") || shape.shape != [2] || shape.length != 8 {
+    if !validate_packed_shape_segment(shape.dtype.as_deref(), &shape.shape, shape.length) {
         return Err(DenseExecutionError::Contract(format!(
-            "{shape_name} must be an I32 logical shape pair"
+            "{shape_name} must be an I32 or I64 logical shape pair"
         )));
     }
+    let logical_len = shape.length;
     let logical = store.read(&shape_name)?;
-    let rows_i32 = i32::from_le_bytes(logical[0..4].try_into().expect("validated shape bytes"));
-    let cols_i32 = i32::from_le_bytes(logical[4..8].try_into().expect("validated shape bytes"));
+    let (rows, cols) = decode_packed_shape(shape.dtype.as_deref(), &logical)
+        .map_err(DenseExecutionError::Contract)?;
     drop(logical);
-    let rows = usize::try_from(rows_i32).map_err(|_| {
-        DenseExecutionError::Contract(format!("{shape_name} has a non-positive row count"))
-    })?;
-    let cols = usize::try_from(cols_i32).map_err(|_| {
-        DenseExecutionError::Contract(format!("{shape_name} has a non-positive column count"))
-    })?;
     if rows == 0
         || cols == 0
+        || group_size == 0
         || positions == 0
-        || !cols.is_multiple_of(32)
+        || !cols.is_multiple_of(group_size)
         || input.len() != positions.saturating_mul(cols)
     {
         return Err(DenseExecutionError::Contract(
@@ -227,7 +225,7 @@ where
         ));
     }
     let words_per_row = cols.div_ceil(8);
-    let groups_per_row = cols / 32;
+    let groups_per_row = cols / group_size;
     let packed_row_bytes = words_per_row
         .checked_mul(4)
         .ok_or_else(|| DenseExecutionError::Contract("packed row size overflow".into()))?;
@@ -242,7 +240,7 @@ where
         || scales.length != (rows * scale_row_bytes) as u64
     {
         return Err(DenseExecutionError::Contract(format!(
-            "{tensor} does not have the exact packed INT4/BF16 group-32 triplet"
+            "{tensor} does not have the exact packed INT4/BF16 group-{group_size} triplet"
         )));
     }
     let combined_row_bytes = packed_row_bytes
@@ -258,7 +256,7 @@ where
         .max(1);
     let mut output = vec![0.0_f32; positions * rows];
     let mut metrics = DenseTileMetrics {
-        storage_bytes: 8,
+        storage_bytes: logical_len,
         ..DenseTileMetrics::default()
     };
     for first_row in (0..rows).step_by(rows_per_tile) {
@@ -306,6 +304,21 @@ where
         rows,
         metrics,
     })
+}
+
+/// Group-32 helper preserved for existing callers.
+pub fn tiled_packed_int4_group32_bf16_matmul<F>(
+    store: &DenseTensorStore,
+    tensor: &str,
+    tile_bytes: u64,
+    positions: usize,
+    input: &[f32],
+    execute_tile: F,
+) -> Result<TiledMatmulOutput, DenseExecutionError>
+where
+    F: FnMut(&[u8], &[u8], usize, usize, usize, &[f32]) -> Result<Vec<f32>, String>,
+{
+    tiled_packed_int4_bf16_matmul(store, tensor, 32, tile_bytes, positions, input, execute_tile)
 }
 
 pub fn tiled_bf16_matmul_rows<F>(

@@ -6,8 +6,8 @@ const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
 
-const VERSION = '1.2.0-fix';
-const RELEASE_TAG = '1.2.0-fix';
+const VERSION = '1.3.0';
+const RELEASE_TAG = '1.3.0';
 const REPO = 'walkowicz19/sytra-studio';
 
 const USAGE = `
@@ -120,9 +120,10 @@ function copyDirSync(src, dest) {
 }
 
 async function downloadBinary(fileName, destPath) {
+  const extension = platform === 'windows' ? '.exe' : '';
+  const program = fileName.replace(/\.exe$/, '');
   const urls = [
-    `https://raw.githubusercontent.com/${REPO}/${RELEASE_TAG}/binaries/${platform}/${fileName}`,
-    `https://raw.githubusercontent.com/${REPO}/main/binaries/${platform}/${fileName}`,
+    `https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${program}-${platform}${extension}`,
   ];
   let lastError;
   for (const url of urls) {

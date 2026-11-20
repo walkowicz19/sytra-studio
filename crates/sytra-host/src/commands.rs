@@ -34,16 +34,21 @@ pub fn start_op(
                 }
             }
 
-            let model_entry = guider
-                .resolve_model(&spec.config.model)
-                .ok_or_else(|| format!("Model '{}' not found in catalog", spec.config.model))?;
+            let base_model = crate::training_source::resolve(&mut spec.config)?;
+            spec.config.backend.kind = BackendResolver::resolve(spec.config.backend.kind);
 
             // Check hardware resource availability
-            guard
-                .check_train(model_entry, &spec)
-                .map_err(|e| e.to_string())?;
+            if spec.config.performance.get("training_engine").and_then(serde_json::Value::as_str) == Some("helix") {
+                crate::validate_before_spawn(&Operation::Train(spec.clone())).map_err(|e| e.to_string())?;
+                guard.check_helix_train(&spec).map_err(|e| e.to_string())?;
+            } else {
+                let model_entry = guider.resolve_model(&base_model)
+                    .ok_or_else(|| format!("Model '{}' not found in catalog", spec.config.model))?;
+                guard.check_train(model_entry, &spec).map_err(|e| e.to_string())?;
+            }
 
-            spec.config.backend.kind = BackendResolver::resolve(spec.config.backend.kind);
+            let yaml = spec.config.to_yaml_string().map_err(|e| e.to_string())?;
+            std::fs::write(&spec.config_path, yaml).map_err(|e| format!("Cannot persist resolved training config: {e}"))?;
             Operation::Train(spec)
         }
         Operation::Merge(mut spec) => {
@@ -67,9 +72,30 @@ pub fn start_op(
 
             // Resource guard check for merge
             let mut resolved_models = Vec::new();
+            let mut seen_refs = std::collections::HashSet::new();
             for m_ref in &model_refs {
-                if let Some(entry) = resolve_model_with_fallback(guider, m_ref) {
-                    resolved_models.push(entry);
+                if seen_refs.insert(m_ref.clone()) {
+                    if let Some(entry) = resolve_model_with_fallback(guider, m_ref) {
+                        resolved_models.push(entry);
+                    }
+                }
+            }
+            if let Some(base) = spec.config.base_model.as_deref() {
+                if !base.trim().is_empty() && seen_refs.insert(base.to_string()) {
+                    if let Some(entry) = resolve_model_with_fallback(guider, base) {
+                        resolved_models.push(entry);
+                    }
+                }
+            }
+            if spec.config.merge_method == MergeMethod::Moe {
+                if let Some(options) = &spec.config.moe {
+                    for expert in &options.shared_experts {
+                        if seen_refs.insert(expert.source_model.clone()) {
+                            if let Some(entry) = resolve_model_with_fallback(guider, &expert.source_model) {
+                                resolved_models.push(entry);
+                            }
+                        }
+                    }
                 }
             }
             let resolved_refs: Vec<&ModelCatalogEntry> = resolved_models.iter().collect();
@@ -82,6 +108,7 @@ pub fn start_op(
         Operation::Publish(spec) => Operation::Publish(spec),
     };
 
+    crate::validate_before_spawn(&resolved_op).map_err(|e| e.to_string())?;
     let op_id = resolved_op.op_id();
 
     // 2. Initialize initial running archive record
@@ -143,7 +170,8 @@ pub fn resume_op(
     if let Operation::Train(ref mut spec) = op {
         // Set resume path to latest checkpoint folder
         let adapter_path = &spec.config.output.adapter_path;
-        spec.config.output.resume_from = Some(adapter_path.join("checkpoint-latest"));
+        spec.config.output.resume_from = Some(crate::training_source::latest_checkpoint(adapter_path)?);
+        spec.config.init_adapter = None;
         start_op(op, runner, archive, guard, guider)
     } else {
         Err("Only training operations can be resumed".to_string())
@@ -172,6 +200,10 @@ pub fn estimate_memory(
     _guard: &ResourceGuard,
     guider: &Guider,
 ) -> Result<u64, String> {
+    if spec.config.performance.get("training_engine").and_then(serde_json::Value::as_str) == Some("helix") {
+        if spec.config.model != model_ref { return Err("Model reference does not match the Helix configuration".into()); }
+        return crate::helix_guard::estimate(&spec).map(|(vram, _)| vram);
+    }
     let model = guider
         .resolve_model(&model_ref)
         .ok_or_else(|| format!("Model '{}' not found in catalog", model_ref))?;
@@ -197,54 +229,76 @@ pub fn merge_check(
     Ok(guider.merge_check_with_base(base_model.as_deref(), &model_refs, method))
 }
 
+fn extract_billions_param_count(model_ref: &str) -> Option<u64> {
+    let lower = model_ref.to_lowercase();
+    let bytes = lower.as_bytes();
+    for (idx, &b) in bytes.iter().enumerate() {
+        if b != b'b' || idx == 0 {
+            continue;
+        }
+        // Require non-alphanumeric boundaries so path segments like "base", "hub", or
+        // "build" are never misread as parameter sizes.
+        if idx + 1 < bytes.len() && bytes[idx + 1].is_ascii_alphanumeric() {
+            continue;
+        }
+        if !bytes[idx - 1].is_ascii_digit() {
+            continue;
+        }
+        let mut start = idx;
+        while start > 0 && (bytes[start - 1].is_ascii_digit() || bytes[start - 1] == b'.') {
+            start -= 1;
+        }
+        let is_moe_product = start >= 2
+            && bytes[start - 1] == b'x'
+            && bytes[start - 2].is_ascii_digit();
+        if start > 0 && bytes[start - 1].is_ascii_alphabetic() && !is_moe_product {
+            continue;
+        }
+        if let Ok(num) = lower[start..idx].parse::<f64>() {
+            if num.is_finite() && num > 0.0 {
+                return Some((num * 1_000_000_000.0) as u64);
+            }
+        }
+    }
+    None
+}
+
+fn estimate_params_from_local_dir(model_ref: &str) -> Option<u64> {
+    let metadata = std::fs::metadata(model_ref).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+    let mut total_bytes: u64 = 0;
+    if let Ok(entries) = std::fs::read_dir(model_ref) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if name.ends_with(".safetensors")
+                        || name.ends_with(".bin")
+                        || name.ends_with(".pt")
+                    {
+                        total_bytes = total_bytes.saturating_add(meta.len());
+                    }
+                }
+            }
+        }
+    }
+    if total_bytes > 0 {
+        Some((total_bytes / 2).max(1))
+    } else {
+        None
+    }
+}
+
 fn resolve_model_with_fallback(guider: &Guider, m_ref: &str) -> Option<ModelCatalogEntry> {
     if let Some(entry) = guider.resolve_model(m_ref) {
         return Some(entry.clone());
     }
 
-    let lower = m_ref.to_lowercase();
-    let mut param_count = 7_000_000_000; // default to 7B
-
-    // Extract parameters from name like -7b, -70b
-    if let Some(pos) = lower.find('b') {
-        let chars: Vec<char> = lower[..pos].chars().collect();
-        let mut num_str = String::new();
-        for c in chars.into_iter().rev() {
-            if c.is_ascii_digit() || c == '.' {
-                num_str.insert(0, c);
-            } else if !num_str.is_empty() {
-                break;
-            }
-        }
-        if let Ok(num) = num_str.parse::<f64>() {
-            param_count = (num * 1_000_000_000.0) as u64;
-        }
-    } else {
-        // Fallback: estimate from local directory if present
-        if let Ok(metadata) = std::fs::metadata(m_ref) {
-            if metadata.is_dir() {
-                let mut total_bytes = 0;
-                if let Ok(entries) = std::fs::read_dir(m_ref) {
-                    for entry in entries.flatten() {
-                        if let Ok(meta) = entry.metadata() {
-                            if meta.is_file() {
-                                let name = entry.file_name().to_string_lossy().to_lowercase();
-                                if name.ends_with(".safetensors")
-                                    || name.ends_with(".bin")
-                                    || name.ends_with(".pt")
-                                {
-                                    total_bytes += meta.len();
-                                }
-                            }
-                        }
-                    }
-                }
-                if total_bytes > 0 {
-                    param_count = total_bytes / 2;
-                }
-            }
-        }
-    }
+    let param_count = estimate_params_from_local_dir(m_ref)
+        .or_else(|| extract_billions_param_count(m_ref))
+        .unwrap_or(7_000_000_000);
 
     Some(ModelCatalogEntry {
         model_id: m_ref.to_string(),
@@ -265,4 +319,28 @@ fn resolve_model_with_fallback(guider: &Guider, m_ref: &str) -> Option<ModelCata
         approx_download_gb: None,
         explicit_risks: vec!["Not in the pinned Sytra catalog; architecture is unknown.".into()],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_measures_local_weights_even_when_path_contains_b() {
+        let root = std::env::temp_dir().join(format!("sytra_cmd_test_{}", std::process::id()));
+        let model_dir = root.join("hub").join("v2_base_model");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("model.safetensors"), vec![0u8; 2_000_000]).unwrap();
+        let guider = Guider::new();
+        let entry = resolve_model_with_fallback(&guider, model_dir.to_str().unwrap()).unwrap();
+        assert_eq!(entry.param_count, 1_000_000);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn fallback_parses_size_suffixes_without_matching_words() {
+        assert_eq!(extract_billions_param_count("Qwen/Qwen2.5-0.5B-Instruct"), Some(500_000_000));
+        assert_eq!(extract_billions_param_count("D:\\cache\\hub\\my2base"), None);
+        assert_eq!(extract_billions_param_count("mistralai/Mixtral-8x7B-v0.1"), Some(7_000_000_000));
+    }
 }
