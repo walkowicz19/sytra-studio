@@ -112,7 +112,7 @@ class StdioSession:
         session = cls(process)
         try:
             result = await session.request('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
-                'clientInfo': {'name': 'sytra-studio', 'version': '1.3.0'}}, timeout=20, cancellable=False)
+                'clientInfo': {'name': 'sytra-studio', 'version': '1.3.1'}}, timeout=20, cancellable=False)
             if not isinstance(result.get('protocolVersion'), str) or 'tools' not in result.get('capabilities', {}):
                 raise McpError('Server did not advertise the MCP tools capability')
             await session.notify('notifications/initialized', {})

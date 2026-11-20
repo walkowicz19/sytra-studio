@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-VERSION="${SYTRA_VERSION:-1.3.0}"
+VERSION="${SYTRA_VERSION:-1.3.1}"
 REPO="${SYTRA_REPO:-walkowicz19/sytra-studio}"
 INSTALL_DIR="${SYTRA_INSTALL_DIR:-$HOME/.sytra}"
 CLIENTS="${SYTRA_MCP_CLIENTS:-auto}"

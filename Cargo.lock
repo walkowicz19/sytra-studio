@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-contracts"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -4525,7 +4525,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-engine"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "minijinja",
  "reqwest 0.12.28",
@@ -4539,7 +4539,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-host"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4556,7 +4556,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-mcp"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -4570,7 +4570,7 @@ dependencies = [
 
 [[package]]
 name = "sytra-studio"
-version = "1.3.0"
+version = "1.3.1"
 dependencies = [
  "anyhow",
  "mime_guess",

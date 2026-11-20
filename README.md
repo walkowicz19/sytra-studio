@@ -2,8 +2,8 @@
 
 Local, hardware-aware desktop studio and Model Context Protocol (MCP) server for discovering, indexing, fine-tuning, merging, chatting with, and serving local LLMs & Mixture-of-Experts (MoE) checkpoints.
 
-**1.3.0 Documentation:**
-[Release Notes & Migration](docs/releases/1.3.0.md) ·
+**1.3.1 Documentation:**
+[Release Notes](docs/releases/1.3.1.md) · [Migration Guide](docs/releases/1.3.0.md) ·
 [MoE Builder Verification](docs/MOE_BUILDER_VERIFICATION.md) ·
 [Helix Training Benchmark & Kernels](docs/HELIX_TRAINING_BENCHMARK.md) ·
 [Semantic Dataset Curation](docs/DATASET_SEMANTIC.md) ·

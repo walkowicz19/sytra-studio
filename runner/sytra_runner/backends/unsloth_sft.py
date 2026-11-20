@@ -38,7 +38,7 @@ _ML_PACKAGES = (
 
 def _dependency_versions() -> dict[str, str]:
     """Return the exact training stack for telemetry and run provenance."""
-    versions: dict[str, str] = {"python": sys.version.split()[0], "sytra": "1.3.0"}
+    versions: dict[str, str] = {"python": sys.version.split()[0], "sytra": "1.3.1"}
     for package in _ML_PACKAGES:
         try:
             versions[package] = importlib.metadata.version(package)

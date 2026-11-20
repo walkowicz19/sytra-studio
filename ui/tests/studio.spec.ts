@@ -16,7 +16,7 @@ test('renders v1 UI and shared resource controls without browser errors', async 
 
   await expect(page.getByText('STUDIO', { exact: true })).toBeVisible()
   await expect(page.getByText('STUDIO — 01', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('v1.3.0', { exact: true })).toBeVisible()
+  await expect(page.getByText('v1.3.1', { exact: true })).toBeVisible()
   await expect(page.locator('.pagination-bar')).toContainText('Showing 1–3 of 3 models')
   await expect(page.getByLabel('Models per page')).toBeVisible()
   await expect(page.locator('.pagination-bar button')).toHaveCount(0)

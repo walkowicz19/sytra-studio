@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = $(if ($env:SYTRA_VERSION) { $env:SYTRA_VERSION } else { '1.3.0' }),
+    [string]$Version = $(if ($env:SYTRA_VERSION) { $env:SYTRA_VERSION } else { '1.3.1' }),
     [string]$Repo = $(if ($env:SYTRA_REPO) { $env:SYTRA_REPO } else { 'walkowicz19/sytra-studio' }),
     [string]$InstallDir = $(if ($env:SYTRA_INSTALL_DIR) { $env:SYTRA_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.sytra' }),
     [string]$Clients = $(if ($env:SYTRA_MCP_CLIENTS) { $env:SYTRA_MCP_CLIENTS } else { 'auto' }),

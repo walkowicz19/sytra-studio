@@ -98,7 +98,7 @@
     >
       <i class="bi {themeStore.dark ? 'bi-sun-fill' : 'bi-moon-fill'}"></i>
     </button>
-    <span class="version">v1.3.0</span>
+    <span class="version">v1.3.1</span>
   </div>
 </aside>
 

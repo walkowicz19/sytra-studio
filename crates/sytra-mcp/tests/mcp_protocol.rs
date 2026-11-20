@@ -231,7 +231,7 @@ fn cli_flags_configure_project_mcp_without_npm() {
     let ver = Command::new(bin).arg("--version").output().expect("version");
     assert!(ver.status.success());
     let stdout = String::from_utf8_lossy(&ver.stdout);
-    assert!(stdout.contains("sytra-mcp 1.3.0"), "unexpected version output: {stdout}");
+    assert!(stdout.contains("sytra-mcp 1.3.1"), "unexpected version output: {stdout}");
 
     let cfg = Command::new(bin)
         .args(["print-config", "--client", "generic"])

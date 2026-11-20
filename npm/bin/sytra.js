@@ -6,8 +6,8 @@ const os = require('os');
 const https = require('https');
 const { spawn } = require('child_process');
 
-const VERSION = '1.3.0';
-const RELEASE_TAG = '1.3.0';
+const VERSION = '1.3.1';
+const RELEASE_TAG = '1.3.1';
 const REPO = 'walkowicz19/sytra-studio';
 
 const USAGE = `
